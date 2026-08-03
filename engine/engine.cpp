@@ -100,10 +100,10 @@ std::string Engine::handle_message(std::string_view line) {
     if (command == "config.get") return response_ok(request->id, {{"root_folder", config_.root_folder.string()}, {"extension", config_.extension}, {"run_minimized", config_.run_minimized}, {"autostart", config_.autostart}});
     if (command == "sites.rescan") { rescan_sites_and_refresh_nginx(); publish_sites_changed(); return response_ok(request->id, sites_.list()); }
     if (command == "service.rescan") { services_.detect_all(); configure_nginx(); publish_status(); return response_ok(request->id, service_list()); }
-    if (command == "dns.start") { const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id) : response_error(request->id, "DNS start failed"); }
-    if (command == "dns.stop") { dns_.stop(); publish_status(); return response_ok(request->id); }
-    if (command == "dns.restart") { dns_.stop(); const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id) : response_error(request->id, "DNS restart failed"); }
-    if (command == "stop_all") { dns_.stop(); for (const auto& provider : services_.all()) provider->stop(); publish_status(); return response_ok(request->id); }
+    if (command == "dns.start") { const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id, service_list()) : response_error(request->id, "DNS start failed"); }
+    if (command == "dns.stop") { dns_.stop(); publish_status(); return response_ok(request->id, service_list()); }
+    if (command == "dns.restart") { dns_.stop(); const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id, service_list()) : response_error(request->id, "DNS restart failed"); }
+    if (command == "stop_all") { dns_.stop(); for (const auto& provider : services_.all()) provider->stop(); publish_status(); return response_ok(request->id, service_list()); }
     if (command.starts_with("service.")) {
       const auto id = request->params.value("service", ""); auto* provider = services_.get_by_id(id);
       if (!provider) return response_error(request->id, "unknown service");
@@ -112,7 +112,7 @@ std::string Engine::handle_message(std::string_view line) {
       else if (command == "service.stop") ok = provider->stop();
       else if (command == "service.restart" || command == "service.set_version") ok = provider->restart(version);
       if (ok) publish_status();
-      return ok ? response_ok(request->id) : response_error(request->id, "service operation failed");
+      return ok ? response_ok(request->id, service_list()) : response_error(request->id, "service operation failed");
     }
     if (command == "config.set") {
       if (request->params.contains("root_folder")) config_.root_folder = request->params["root_folder"].get<std::string>();

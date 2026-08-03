@@ -5,8 +5,21 @@
 #include <sddl.h>
 #include <array>
 #include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <memory>
+#include <nlohmann/json.hpp>
 
 namespace appytizer {
+struct PipeServer::Subscriber {
+  HANDLE pipe{};
+  std::atomic_bool running{true};
+  std::mutex mutex;
+  std::condition_variable ready;
+  std::deque<std::string> messages;
+  std::thread writer;
+};
+
 PipeServer::~PipeServer() { stop(); }
 bool PipeServer::start(Handler handler) {
   if (running_.exchange(true)) return true;
@@ -18,9 +31,12 @@ void PipeServer::stop() {
   if (!running_.exchange(false)) return;
   WinHandle wake(CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
   if (accept_thread_.joinable()) accept_thread_.join();
-  std::vector<void*> subscribers;
+  std::vector<std::shared_ptr<Subscriber>> subscribers;
   { std::scoped_lock lock(clients_mutex_); subscribers = subscribers_; }
-  for (void* value : subscribers) DisconnectNamedPipe(static_cast<HANDLE>(value));
+  for (const auto& subscriber : subscribers) {
+    subscriber->running = false; subscriber->ready.notify_all();
+    DisconnectNamedPipe(subscriber->pipe);
+  }
   std::scoped_lock lock(workers_mutex_);
   for (auto& worker : workers_) if (worker.joinable()) worker.join();
   workers_.clear();
@@ -28,11 +44,11 @@ void PipeServer::stop() {
 }
 void PipeServer::broadcast(std::string_view event) {
   const std::string message = std::string(event) + "\n";
-  std::vector<void*> subscribers;
+  std::vector<std::shared_ptr<Subscriber>> subscribers;
   { std::scoped_lock lock(clients_mutex_); subscribers = subscribers_; }
-  for (void* value : subscribers) {
-    DWORD written{};
-    WriteFile(static_cast<HANDLE>(value), message.data(), static_cast<DWORD>(message.size()), &written, nullptr);
+  for (const auto& subscriber : subscribers) {
+    { std::scoped_lock lock(subscriber->mutex); subscriber->messages.push_back(message); }
+    subscriber->ready.notify_all();
   }
 }
 void PipeServer::run() {
@@ -41,8 +57,11 @@ void PipeServer::run() {
   SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
   while (running_) {
     HANDLE pipe = CreateNamedPipeW(kPipeName, PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-        4, 65536, 65536, 1000, descriptor ? &security : nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) break;
+        PIPE_UNLIMITED_INSTANCES, 65536, 65536, 1000, descriptor ? &security : nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+      if (!running_) break;
+      continue;
+    }
     if (!(ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED)) { CloseHandle(pipe); continue; }
     std::scoped_lock lock(workers_mutex_);
     workers_.emplace_back([this, pipe] { serve_client(pipe); });
@@ -55,14 +74,41 @@ void PipeServer::serve_client(void* raw_pipe) {
   DWORD read{};
   if (!ReadFile(pipe.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) || !read) return;
   const std::string request(buffer.data(), read);
-  const bool subscribe = request.find("\"cmd\":\"events.subscribe\"") != std::string::npos;
+  bool subscribe = false;
+  try { subscribe = nlohmann::json::parse(request).value("cmd", "") == "events.subscribe"; } catch (...) {}
   const std::string answer = handler_(request);
+  std::shared_ptr<Subscriber> subscriber;
+  if (subscribe) {
+    subscriber = std::make_shared<Subscriber>(); subscriber->pipe = pipe.get();
+    std::scoped_lock lock(clients_mutex_); subscribers_.push_back(subscriber);
+  }
   DWORD written{};
-  if (!WriteFile(pipe.get(), answer.data(), static_cast<DWORD>(answer.size()), &written, nullptr)) return;
+  if (!WriteFile(pipe.get(), answer.data(), static_cast<DWORD>(answer.size()), &written, nullptr)) {
+    if (subscriber) { std::scoped_lock lock(clients_mutex_); std::erase(subscribers_, subscriber); }
+    return;
+  }
   if (!subscribe) return;
-  { std::scoped_lock lock(clients_mutex_); subscribers_.push_back(pipe.get()); }
-  while (running_ && ReadFile(pipe.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) && read) {}
-  std::scoped_lock lock(clients_mutex_);
-  std::erase(subscribers_, static_cast<void*>(pipe.get()));
+  subscriber->writer = std::thread([subscriber] {
+    while (subscriber->running) {
+      std::string message;
+      {
+        std::unique_lock lock(subscriber->mutex);
+        subscriber->ready.wait(lock, [&] { return !subscriber->running || !subscriber->messages.empty(); });
+        if (!subscriber->running && subscriber->messages.empty()) break;
+        message = std::move(subscriber->messages.front()); subscriber->messages.pop_front();
+      }
+      DWORD sent{};
+      if (!WriteFile(subscriber->pipe, message.data(), static_cast<DWORD>(message.size()), &sent, nullptr)) {
+        subscriber->running = false; subscriber->ready.notify_all(); break;
+      }
+    }
+  });
+  {
+    std::unique_lock lock(subscriber->mutex);
+    subscriber->ready.wait(lock, [&] { return !running_ || !subscriber->running; });
+  }
+  { std::scoped_lock lock(clients_mutex_); std::erase(subscribers_, subscriber); }
+  subscriber->running = false; subscriber->ready.notify_all();
+  if (subscriber->writer.joinable()) subscriber->writer.join();
 }
 } // namespace appytizer

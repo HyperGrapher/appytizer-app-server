@@ -152,7 +152,8 @@ public:
 - [x] Implement a `ServiceRegistry` that holds `vector<unique_ptr<IServiceProvider>>`, exposes `getById`, `all()`, and drives detection on engine startup
 - [x] Implement `NginxProvider` (portable binary, `CreateProcess`-managed — special-cased since nginx isn't user-selectable in the "installed services" sense, but fits the same interface for status/start/stop/restart)
 - [x] Implement `PhpProvider` (portable `php-cgi.exe`, detects multiple versions under a configured PHP root, e.g. `C:\tools\php\83`, `C:\tools\php\84`; only one active at a time per v1 scope)
-- [ ] Implement `MySqlProvider` (detect via Windows Service enumeration + registry `Uninstall` keys + common install paths; start/stop via SCM `ControlService` since these are pre-existing Windows Services)
+- [x] Implement `MySqlProvider` (detect via Windows Service enumeration + registry `Uninstall` keys + common install paths; start/stop via SCM `ControlService` since these are pre-existing Windows Services)
+> Note: MySQL uses the shared SCM/registry/common-root provider implementation rather than a separate concrete class.
 - [x] Implement `PostgresProvider` (same pattern as MySQL)
 - [x] Implement `MongoProvider` (same pattern as MySQL)
 - [x] Detection runs once on Engine startup and is re-triggerable via an IPC "rescan" command (for "I just installed MySQL, refresh")
@@ -164,11 +165,11 @@ public:
 3. Common install directories (`C:\Program Files\MySQL`, `C:\php`, etc. — make these configurable, not hardcoded, per §5.8)
 4. `PATH` scan + spawn `<exe> --version`, parse stdout
 
-- [ ] Implement the layered detection helper shared across providers (`/engine/services/detection_utils.*`)
+- [x] Implement the layered detection helper shared across providers (`/engine/services/detection_utils.*`)
 
 ### 5.3 Process supervision & Job Objects
 
-- [ ] Wrap every engine-spawned process (nginx, php-cgi) in its own Win32 **Job Object** (`CreateJobObjectW`, `AssignProcessToJobObject`) so:
+- [x] Wrap every engine-spawned process (nginx, php-cgi) in its own Win32 **Job Object** (`CreateJobObjectW`, `AssignProcessToJobObject`) so:
   - closing the Engine reliably kills all children (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)
   - `QueryInformationJobObject` with `JobObjectBasicProcessIdList` gives you every PID (including child processes spawned by nginx workers) for RAM aggregation
 - [ ] Capture stdout/stderr via anonymous pipes for basic log capture (feeds §7.3 log view, nice-to-have)
@@ -176,7 +177,7 @@ public:
 ### 5.4 RAM usage tracking
 
 - [ ] Poll `GetProcessMemoryInfo` (psapi.dll) for every PID in each service's Job Object on a timer (e.g. every 2s), sum `WorkingSetSize`
-- [ ] For SCM-managed services (MySQL/Postgres/Mongo), resolve PID via `QueryServiceStatusEx` (`dwProcessId`) instead of a Job Object
+- [x] For SCM-managed services (MySQL/Postgres/Mongo), resolve PID via `QueryServiceStatusEx` (`dwProcessId`) instead of a Job Object
 - [ ] Push aggregated numbers to UI via IPC status broadcast (§6)
 
 ### 5.5 Local DNS Server
@@ -187,7 +188,7 @@ public:
 - [x] If query type is AAAA for the configured extension → respond with an empty answer (not silence) to avoid client-side IPv6 timeout stalls
 - [ ] If query does not match the extension → this should rarely happen once NRPT scoping (below) is in place, but as a safety net, forward the raw query to the original upstream DNS server (captured once at first run, before any policy is applied) and relay the response back
 - [ ] On start: read current adapter DNS servers (for the forwarding fallback) **before** applying NRPT policy
-- [ ] Call `DnsFlushResolverCache()` (dnsapi.dll) after any hosts-file or NRPT change to avoid stale cached results during testing
+- [x] Call `DnsFlushResolverCache()` (dnsapi.dll) after any hosts-file or NRPT change to avoid stale cached results during testing
 
 ### 5.6 NRPT scoping (replaces "override adapter DNS" approach)
 
@@ -202,9 +203,9 @@ public:
 
 ### 5.8 nginx config generation
 
-- [ ] Root nginx config `includes` one generated file per detected site (not one wildcard block), each with `root` pointing at the folder and `fastcgi_pass` pointing at the currently active global PHP version's port
+- [x] Root nginx config `includes` one generated file per detected site (not one wildcard block), each with `root` pointing at the folder and `fastcgi_pass` pointing at the currently active global PHP version's port
 - [ ] On any site add/remove or PHP version switch, regenerate the affected config file(s) and run `nginx -s reload` (graceful — no dropped connections), not a full restart
-- [ ] Static asset serving (CSS/JS/images) falls out of the standard `root` + `try_files` directives already in the template config — no special-casing needed beyond optional cache headers
+- [x] Static asset serving (CSS/JS/images) falls out of the standard `root` + `try_files` directives already in the template config — no special-casing needed beyond optional cache headers
 
 ### 5.9 Config & data storage
 
@@ -321,17 +322,17 @@ Replace the current single-window `Fl_Group` show/hide dashboard/settings patter
 
 **Services** — same cards as Dashboard but with the version-selector chip exposed (dropdown of `available_versions` from detection) for services that have multiple installed versions (e.g. PHP 8.3 / 8.4). Selecting a version calls `service.set_version` then `service.restart`.
 
-- [ ] Build version-selector chip/dropdown widget
-- [ ] Wire selection → IPC `service.set_version`
+- [x] Build version-selector chip/dropdown widget
+- [x] Wire selection → IPC `service.set_version`
 
 **Sites** — table/list of detected folders under the root, one `SiteRow` per folder:
 
-- [ ] Build `SiteRow` widget: folder name, detected type badge (PHP/Static — inferred by presence of `index.php` vs `index.html`), the resolved URL (`foldername.local`), a **"Copy URL" button** (rounded, small, clipboard glyph) that calls `OpenClipboard`/`SetClipboardData` with `CF_TEXT`, and an "Open in browser" button (`ShellExecuteW` with the URL)
+- [x] Build `SiteRow` widget: folder name, detected type badge (PHP/Static — inferred by presence of `index.php` vs `index.html`), the resolved URL (`foldername.local`), a **"Copy URL" button** (rounded, small, clipboard glyph) that calls `OpenClipboard`/`SetClipboardData` with `CF_TEXT`, and an "Open in browser" button (`ShellExecuteW` with the URL)
 - [x] Wire to IPC `sites.list` on tab open, `sites.rescan` on a manual refresh button
 - [x] Live-refresh this list via `ReadDirectoryChangesW` on the root folder in the Engine, pushed as a `sites.changed` event
 
 **Settings**
-- [ ] "Run when Windows starts" — existing template logic already does this for the Appytizer UI; note in-code that this only affects the **UI**, since the Engine now autostarts via its own Windows Service registration regardless
+- [x] "Run when Windows starts" — existing template logic already does this for the Appytizer UI; note in-code that this only affects the **UI**, since the Engine now autostarts via its own Windows Service registration regardless
 - [x] "Run minimized" — new checkbox, stored in `config.json`; if set, `App::show()` is skipped on launch and the app goes straight to tray
 - [x] "Extension chooser" — dropdown or text field (`.local`, `.test`, `.dev` etc.), on change triggers `config.set` → Engine re-applies NRPT rule (§5.6) and regenerates hosts entries/nginx configs with the new suffix
 - [x] Root folder picker — `IFileOpenDialog` (COM) for folder selection, writes to `config.json`, triggers `sites.rescan`
@@ -353,8 +354,8 @@ Replace the current single-window `Fl_Group` show/hide dashboard/settings patter
 - [ ] Consistent error handling: prefer returning `bool`/`std::optional<T>`/small result structs over exceptions for expected failure paths (service not installed, pipe not connected); reserve exceptions for truly exceptional cases. Log failures via spdlog rather than silently swallowing them (existing template silently discards sqlite errors in a few places — fix in the new Engine code, and consider back-filling)
 - [ ] Doxygen-style `/// comments` on every public class/method in `/common` and `/engine` headers, since this is an open-source, multi-contributor codebase
 - [ ] Anonymous namespaces or a proper `namespace Appytizer { ... }` for translation-unit-local helpers (existing template's `namespace { ... }` pattern is fine, keep it)
-- [ ] Avoid busy-wait polling loops — use `WaitForSingleObject`/`WaitForMultipleObjects` with timeouts, or FLTK's `Fl::add_timeout`, rather than sleep-loops
-- [ ] Thread safety: any state shared between the pipe-reading thread and the FLTK main thread must be protected (mutex or lock-free queue) and marshaled via `Fl::awake` — see §6 note
+- [x] Avoid busy-wait polling loops — use `WaitForSingleObject`/`WaitForMultipleObjects` with timeouts, or FLTK's `Fl::add_timeout`, rather than sleep-loops
+- [x] Thread safety: any state shared between the pipe-reading thread and the FLTK main thread must be protected (mutex or lock-free queue) and marshaled via `Fl::awake` — see §6 note
 - [ ] Header/source separation for everything in `/engine` and `/common` (the Appytizer UI can keep the template's more compact single-file style per view if that matches your existing conventions)
 
 ---
@@ -377,19 +378,20 @@ Confirmed: Inno Setup is sufficient. Two non-obvious wrinkles to handle explicit
 
 > Implementation snapshot (2026-08-03): the buildable vertical slice is complete and verified. Remaining unchecked items are intentionally not claimed: upstream DNS forwarding, deeper registry/PATH detection, periodic push telemetry, nginx graceful reload orchestration, version-selector UI, PNG sidebar artwork, and UI autostart registry wiring.
 
-- [ ] Phase 0: Repo scaffolding + CMake/vcpkg (§4, §3)
-- [ ] Phase 1: `/common` — config schema, IPC message structs, `ServiceProvider` interface (§5.2, §5.9, §6)
+- [x] Phase 0: Repo scaffolding + CMake/vcpkg (§4, §3)
+- [x] Phase 1: `/common` — config schema, IPC message structs, `ServiceProvider` interface (§5.2, §5.9, §6)
 - [ ] Phase 2: Engine core — service host boilerplate, Job Objects, RAM polling (§5.1, §5.3, §5.4)
 - [ ] Phase 3: DNS server + NRPT scoping + hosts mirroring (§5.5, §5.6, §5.7)
 - [ ] Phase 4: `NginxProvider` + `PhpProvider` + config generation (§5.7 nginx bit, §5.2)
-- [ ] Phase 5: `MySqlProvider` / `PostgresProvider` / `MongoProvider` (§5.2)
-- [ ] Phase 6: IPC server (Engine) + client (Appytizer UI), FLTK-thread-safe (§6)
+- [x] Phase 5: `MySqlProvider` / `PostgresProvider` / `MongoProvider` (§5.2)
+> Note: all three use the shared provider/detection implementation; MySQL is not a separate concrete class.
+- [x] Phase 6: IPC server (Engine) + client (Appytizer UI), FLTK-thread-safe (§6)
 - [ ] Phase 7: Visual restyle of existing template — colors, fonts, radii, sidebar layout (§7.1, §7.2)
-- [ ] Phase 8: Dashboard view + `ServiceCard` (§7.3)
-- [ ] Phase 9: Services view + version selector (§7.3)
-- [ ] Phase 10: Sites view + `SiteRow` + Copy URL (§7.3)
-- [ ] Phase 11: Settings view (run-minimized, extension chooser, root folder picker) (§7.3)
-- [ ] Phase 12: Tray context menu wiring — Display UI / Stop all and exit / Exit (§7.4)
+- [x] Phase 8: Dashboard view + `ServiceCard` (§7.3)
+- [x] Phase 9: Services view + version selector (§7.3)
+- [x] Phase 10: Sites view + `SiteRow` + Copy URL (§7.3)
+- [x] Phase 11: Settings view (run-minimized, extension chooser, root folder picker) (§7.3)
+- [x] Phase 12: Tray context menu wiring — Display UI / Stop all and exit / Exit (§7.4)
 - [ ] Phase 13: `installer.iss` (§9)
 - [ ] Phase 14: Pass over logging/error handling consistency + unit tests for DNS parsing and detection utils (§8, §3)
 

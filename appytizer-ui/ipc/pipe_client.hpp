@@ -10,7 +10,7 @@ namespace appytizer {
 class PipeClient {
 public:
   using Callback = std::function<void(std::string)>;
-  PipeClient() = default;
+  PipeClient();
   ~PipeClient();
   PipeClient(const PipeClient&) = delete;
   PipeClient& operator=(const PipeClient&) = delete;
@@ -23,6 +23,7 @@ private:
   std::atomic_bool connected_{}, listening_{};
   std::mutex listener_mutex_;
   void* listener_pipe_{};
+  void* stop_event_{};
   std::thread listener_;
 };
 } // namespace appytizer

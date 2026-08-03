@@ -64,6 +64,7 @@ class ServiceCard final : public Fl_Group {
 public:
   ServiceCard(int x, int y, int w, int h, std::string id, std::string title, App* app);
   void update(const nlohmann::json& service);
+  void set_disconnected();
   [[nodiscard]] const std::string& id() const { return id_; }
 private:
   static void action_callback(Fl_Widget*, void* data);
@@ -73,10 +74,13 @@ private:
 class ServiceRow final : public Fl_Group {
 public:
   ServiceRow(int x, int y, int w, const nlohmann::json& service, App* app);
+  void update(const nlohmann::json& service);
+  void set_disconnected();
+  [[nodiscard]] const std::string& id() const { return id_; }
 private:
   static void action_callback(Fl_Widget*, void* data);
   static void version_callback(Fl_Widget*, void* data);
-  std::string id_; App* app_{}; bool running_{}; Fl_Choice* versions_{};
+  std::string id_; App* app_{}; bool running_{}; Fl_Choice* versions_{}; Fl_Box* status_{}; Button* action_{};
 };
 
 class SiteRow final : public Fl_Group {
@@ -133,17 +137,17 @@ public:
   void service_action(const std::string& id, bool running, std::string version = {}) {
     const std::string command = id == "dns" ? (running ? "dns.stop" : "dns.start") : (running ? "service.stop" : "service.start");
     nlohmann::json params = nlohmann::json::object(); if (id != "dns") { params["service"] = id; params["version"] = version; }
-    client_.request(command, params.dump(), [this](std::string) { refresh_services(true); });
+    client_.request(command, params.dump(), [this](std::string response) { apply_command_state(std::move(response)); });
   }
   void select_version(const std::string& id, const std::string& version) {
-    client_.request("service.set_version", nlohmann::json{{"service", id}, {"version", version}}.dump(), [this](std::string) { refresh_services(true); });
+    client_.request("service.set_version", nlohmann::json{{"service", id}, {"version", version}}.dump(), [this](std::string response) { apply_command_state(std::move(response)); });
   }
   void stop_and_exit() { client_.request("stop_all", "{}", [this](std::string) { quit(); }); }
 
 private:
   appytizer::ConfigStore store_; appytizer::AppConfig config_; appytizer::PipeClient client_; TrayIcon tray_;
   Fl_Double_Window* window_{}; std::array<Fl_Group*, 4> views_{}; std::array<Button*, 4> nav_{};
-  std::vector<ServiceCard*> dashboard_cards_; Fl_Box *engine_status_{}, *sites_empty_{};
+  std::vector<ServiceCard*> dashboard_cards_; std::vector<ServiceRow*> service_rows_; Fl_Box *engine_status_{}, *sites_empty_{};
   Fl_Scroll *services_scroll_{}, *sites_scroll_{}; Fl_Input *root_input_{}, *extension_input_{};
   Fl_Check_Button *minimized_{}, *autostart_{}; bool quitting_{}; int active_view_{};
 
@@ -220,13 +224,29 @@ private:
     for (const auto& service : services)
       for (auto* card : dashboard_cards_)
         if (card->id() == service.value("id", "")) card->update(service);
+    for (const auto& service : services)
+      for (auto* row : service_rows_)
+        if (row->id() == service.value("id", "")) row->update(service);
     engine_status_->redraw();
+  }
+  void apply_command_state(std::string response) {
+    try {
+      const auto document = nlohmann::json::parse(response);
+      if (document.value("ok", false) && document.contains("result") && document["result"].is_array())
+        apply_service_status(document["result"]);
+    } catch (...) {}
   }
   void handle_event(std::string event) {
     try {
       const auto document = nlohmann::json::parse(event);
-      if (document.value("event", "") == "status.update") apply_service_status(document.at("services"));
-      else if (document.value("event", "") == "sites.changed" && active_view_ == 2) populate_sites(document.at("sites"));
+      const std::string type = document.value("event", "");
+      if (type == "engine.connected") refresh_all();
+      else if (type == "engine.disconnected") {
+        engine_status_->copy_label("● Engine disconnected"); engine_status_->labelcolor(kDanger); engine_status_->redraw();
+        for (auto* card : dashboard_cards_) card->set_disconnected();
+        for (auto* row : service_rows_) row->set_disconnected();
+      } else if (type == "status.update") apply_service_status(document.at("services"));
+      else if (type == "sites.changed" && active_view_ == 2) populate_sites(document.at("sites"));
     } catch (...) {}
   }
   void refresh_services(bool rebuild_services = false) {
@@ -244,8 +264,8 @@ private:
     });
   }
   void populate_services(const nlohmann::json& services) {
-    services_scroll_->clear(); services_scroll_->begin(); int y = 104;
-    for (const auto& service : services) { if (service.value("id", "") == "dns") continue; new ServiceRow(128, y, 808, service, this); y += 112; }
+    services_scroll_->clear(); service_rows_.clear(); services_scroll_->begin(); int y = 104;
+    for (const auto& service : services) { if (service.value("id", "") == "dns") continue; service_rows_.push_back(new ServiceRow(128, y, 808, service, this)); y += 112; }
     services_scroll_->end(); services_scroll_->redraw();
   }
   void refresh_sites() {
@@ -292,7 +312,13 @@ void ServiceCard::update(const nlohmann::json& service) {
   if (id_ == "dns") details = service.value("version", ".local") + "  ·  loopback port 53";
   else if (installations.empty()) details = "Not detected — see Services";
   else details = std::to_string(installations.size()) + " installation" + (installations.size() == 1 ? "" : "s") + "  ·  " + service.value("version", "");
-  details_->copy_label(details.c_str()); action_->copy_label(running_ ? "Stop" : "Start"); redraw();
+  details_->copy_label(details.c_str()); action_->copy_label(running_ ? "Stop" : "Start"); action_->activate();
+  status_->redraw(); details_->redraw(); action_->redraw();
+}
+void ServiceCard::set_disconnected() {
+  running_ = false; status_->copy_label("● Engine offline"); status_->labelcolor(kDanger);
+  details_->copy_label("Status unavailable"); action_->deactivate();
+  status_->redraw(); details_->redraw(); action_->redraw();
 }
 void ServiceCard::action_callback(Fl_Widget*, void* data) { auto* card = static_cast<ServiceCard*>(data); card->app_->service_action(card->id_, card->running_); }
 
@@ -300,7 +326,7 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
     : Fl_Group(x, y, w, 96), id_(service.value("id", "")), app_(app), running_(service.value("running", false)) {
   begin(); auto* panel = new Panel(x, y, w, 96); panel->color(kPanel);
   make_label(x + 16, y + 10, 150, 24, service.value("name", id_), kText, 14, FL_BOLD);
-  make_label(x + 16, y + 38, 150, 20, running_ ? "● Running" : "● Stopped", running_ ? kSuccess : kDanger, 11);
+  status_ = make_label(x + 16, y + 38, 150, 20, running_ ? "● Running" : "● Stopped", running_ ? kSuccess : kDanger, 11);
   const auto installations = service.value("installations", nlohmann::json::array()); std::string location = "No executable or Windows service detected";
   if (!installations.empty()) { const auto& first = installations.front(); location = first.value("windows_service", false) ? "Windows service: " + first.value("service_name", "") : first.value("path", ""); }
   make_label(x + 180, y + 12, 390, 42, location, installations.empty() ? kDanger : kMuted, 11);
@@ -313,7 +339,23 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
     if (candidate != nullptr && active_version == candidate) { selected_version = index; break; }
   }
   if (versions_->size()) versions_->value(selected_version); versions_->callback(version_callback, this);
-  auto* action = make_button(x + 700, y + 12, 90, 30, running_ ? "Stop" : "Start"); action->callback(action_callback, this); end();
+  action_ = make_button(x + 700, y + 12, 90, 30, running_ ? "Stop" : "Start"); action_->callback(action_callback, this); end();
+}
+void ServiceRow::update(const nlohmann::json& service) {
+  running_ = service.value("running", false);
+  status_->copy_label(running_ ? "● Running" : "● Stopped");
+  status_->labelcolor(running_ ? kSuccess : kDanger);
+  action_->copy_label(running_ ? "Stop" : "Start"); action_->activate(); versions_->activate();
+  const std::string active_version = service.value("version", "");
+  for (int index = 0; index < versions_->size(); ++index) {
+    const char* candidate = versions_->text(index);
+    if (candidate != nullptr && active_version == candidate) { versions_->value(index); break; }
+  }
+  status_->redraw(); action_->redraw(); versions_->redraw();
+}
+void ServiceRow::set_disconnected() {
+  running_ = false; status_->copy_label("● Engine offline"); status_->labelcolor(kDanger);
+  action_->deactivate(); versions_->deactivate(); status_->redraw(); action_->redraw(); versions_->redraw();
 }
 void ServiceRow::action_callback(Fl_Widget*, void* data) { auto* row = static_cast<ServiceRow*>(data); const char* selected = row->versions_->text(); row->app_->service_action(row->id_, row->running_, selected ? selected : ""); }
 void ServiceRow::version_callback(Fl_Widget*, void* data) { auto* row = static_cast<ServiceRow*>(data); if (const char* selected = row->versions_->text()) row->app_->select_version(row->id_, selected); }

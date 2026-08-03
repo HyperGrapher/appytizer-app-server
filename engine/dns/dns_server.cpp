@@ -26,6 +26,21 @@ bool DnsServer::start(std::string extension) {
   if (bind(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) { closesocket(socket); WSACleanup(); return false; }
   extension_ = std::move(extension); socket_ = socket; running_ = true; thread_ = std::thread([this]{ run(); }); return true;
 }
-void DnsServer::stop() { if (!running_.exchange(false)) return; closesocket(static_cast<SOCKET>(socket_)); if (thread_.joinable()) thread_.join(); socket_ = INVALID_SOCKET; WSACleanup(); }
+void DnsServer::stop() {
+  if (!running_.exchange(false)) return;
+  const SOCKET socket = static_cast<SOCKET>(socket_);
+  const SOCKET wake = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (wake != INVALID_SOCKET) {
+    sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(53);
+    inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+    const char byte{};
+    sendto(wake, &byte, 1, 0, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+    closesocket(wake);
+  }
+  if (thread_.joinable()) thread_.join();
+  closesocket(socket);
+  socket_ = INVALID_SOCKET;
+  WSACleanup();
+}
 void DnsServer::run() { std::array<std::uint8_t,512> buffer{}; while (running_) { sockaddr_in peer{}; int length = sizeof(peer); const int count = recvfrom(static_cast<SOCKET>(socket_), reinterpret_cast<char*>(buffer.data()), static_cast<int>(buffer.size()), 0, reinterpret_cast<sockaddr*>(&peer), &length); if (count <= 0) continue; const auto response = make_response(std::span(buffer.data(), static_cast<std::size_t>(count)), extension_); if (!response.empty()) sendto(static_cast<SOCKET>(socket_), reinterpret_cast<const char*>(response.data()), static_cast<int>(response.size()), 0, reinterpret_cast<sockaddr*>(&peer), length); } }
 } // namespace appytizer
