@@ -50,7 +50,7 @@ C:\appitizer\hello\index.html
 C:\appitizer\testy\index.html
 ```
 
-Appytizer watches the configured projects root while the Engine is running. Adding, removing, or renaming a direct project folder automatically updates SQLite, managed hosts entries, nginx virtual-host files, and the visible Sites list; Appytizer-managed nginx is refreshed when it is already running. **Rescan folders** remains available as an explicit recovery action. Then use the Dashboard or Services page to start nginx.
+Appytizer watches the configured projects root while the Engine is running. Adding, removing, or renaming a direct project folder automatically updates SQLite, managed hosts entries, nginx virtual-host files, and the visible Sites list; Appytizer-managed nginx is refreshed when it is already running. **Rescan folders** remains available as an explicit recovery action. On Engine startup, the first detected PHP and nginx versions are started automatically; the Dashboard or Services page can still restart them manually.
 
 ```powershell
 curl.exe --noproxy '*' http://hello.local/

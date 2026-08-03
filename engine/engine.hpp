@@ -21,6 +21,7 @@ public:
   static bool sync_hosts(const nlohmann::json& sites, std::string_view extension);
 private:
   void configure_nginx();
+  void start_default_services();
   void rescan_sites_and_refresh_nginx();
   void publish_status();
   void publish_sites_changed();

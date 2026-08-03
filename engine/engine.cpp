@@ -33,6 +33,20 @@ void Engine::configure_nginx() {
   nginx->set_launch_arguments(L"-p \"" + runtime.wstring() + L"\" -c \"" + root_config.wstring() + L"\"");
 }
 
+void Engine::start_default_services() {
+  // PHP must be listening before nginx starts serving PHP requests.
+  for (const std::string_view id : {"php", "nginx"}) {
+    auto* provider = services_.get_by_id(std::string(id));
+    if (!provider || provider->versions().empty()) {
+      spdlog::info("Default service {} is not detected; leaving it stopped.", id);
+      continue;
+    }
+    if (provider->status().running) continue;
+    if (!provider->start("")) spdlog::warn("Could not start default service {}.", id);
+    else spdlog::info("Started default service {}.", id);
+  }
+}
+
 void Engine::rescan_sites_and_refresh_nginx() {
   sites_.rescan(config_.root_folder);
   sync_hosts(sites_.list(), config_.extension);
@@ -54,6 +68,7 @@ bool Engine::start() {
   if (running_) return true;
   services_.detect_all();
   rescan_sites_and_refresh_nginx();
+  start_default_services();
   apply_nrpt(config_.extension);
   if (!dns_.start(config_.extension)) spdlog::warn("DNS server could not bind 127.0.0.1:53");
   ipc_.start([this](std::string_view line) { return handle_message(line); });
