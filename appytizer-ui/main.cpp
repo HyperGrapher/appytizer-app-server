@@ -133,10 +133,10 @@ public:
   void service_action(const std::string& id, bool running, std::string version = {}) {
     const std::string command = id == "dns" ? (running ? "dns.stop" : "dns.start") : (running ? "service.stop" : "service.start");
     nlohmann::json params = nlohmann::json::object(); if (id != "dns") { params["service"] = id; params["version"] = version; }
-    client_.request(command, params.dump(), [this](std::string) { refresh_services(); });
+    client_.request(command, params.dump(), [this](std::string) { refresh_services(true); });
   }
   void select_version(const std::string& id, const std::string& version) {
-    client_.request("service.set_version", nlohmann::json{{"service", id}, {"version", version}}.dump(), [this](std::string) { refresh_services(); });
+    client_.request("service.set_version", nlohmann::json{{"service", id}, {"version", version}}.dump(), [this](std::string) { refresh_services(true); });
   }
   void stop_and_exit() { client_.request("stop_all", "{}", [this](std::string) { quit(); }); }
 
@@ -147,9 +147,9 @@ private:
   Fl_Scroll *services_scroll_{}, *sites_scroll_{}; Fl_Input *root_input_{}, *extension_input_{};
   Fl_Check_Button *minimized_{}, *autostart_{}; bool quitting_{};
 
-  static void timer_callback(void* data) { auto* app = static_cast<App*>(data); if (app->running()) { app->refresh_services(); Fl::repeat_timeout(2.0, timer_callback, data); } }
+  static void timer_callback(void* data) { auto* app = static_cast<App*>(data); if (app->running()) { app->refresh_services(false); Fl::repeat_timeout(2.0, timer_callback, data); } }
   static void nav_callback(Fl_Widget*, void* data) { auto* pair = static_cast<std::pair<App*, int>*>(data); pair->first->show_view(pair->second); }
-  static void rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("service.rescan", "{}", [app](std::string) { app->refresh_services(); }); }
+  static void rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("service.rescan", "{}", [app](std::string) { app->refresh_services(true); }); }
   static void sites_rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("sites.rescan", "{}", [app](std::string) { app->refresh_sites(); }); }
   static void save_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->save_settings(); }
   static void browse_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->browse(); }
@@ -212,18 +212,18 @@ private:
   }
   void show_view(int index) {
     for (int i = 0; i < 4; ++i) { if (i == index) views_[i]->show(); else views_[i]->hide(); nav_[i]->color(i == index ? kPanelHover : kPanel); nav_[i]->labelcolor(i == index ? kAccent : kMuted); nav_[i]->redraw(); }
-    if (index == 1) refresh_services(); if (index == 2) refresh_sites(); window_->redraw();
+    if (index == 1) refresh_services(true); if (index == 2) refresh_sites(); window_->redraw();
   }
   void refresh_all() { refresh_services(); refresh_sites(); }
-  void refresh_services() {
-    client_.request("service.list", "{}", [this](std::string response) {
+  void refresh_services(bool rebuild_services = false) {
+    client_.request("service.list", "{}", [this, rebuild_services](std::string response) {
       try {
         const auto document = nlohmann::json::parse(response);
         if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Engine unavailable"));
         const auto& services = document.at("result");
         engine_status_->copy_label("● Engine connected"); engine_status_->labelcolor(kSuccess);
         for (const auto& service : services) for (auto* card : dashboard_cards_) if (card->id() == service.value("id", "")) card->update(service);
-        populate_services(services);
+        if (rebuild_services) populate_services(services);
       } catch (const std::exception& error) {
         const std::string message = std::string("● Engine disconnected — start AppytizerEngine.exe (details: ") + error.what() + ")";
         engine_status_->copy_label(message.c_str()); engine_status_->labelcolor(kDanger); engine_status_->redraw();
@@ -290,7 +290,13 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
   make_label(x + 180, y + 12, 390, 42, location, installations.empty() ? kDanger : kMuted, 11);
   versions_ = new Fl_Choice(x + 580, y + 12, 110, 30); versions_->color(kPanelHover); versions_->textcolor(kText);
   for (const auto& version : service.value("available_versions", nlohmann::json::array())) versions_->add(version.get<std::string>().c_str());
-  if (versions_->size()) versions_->value(0); versions_->callback(version_callback, this);
+  const std::string active_version = service.value("version", "");
+  int selected_version = 0;
+  for (int index = 0; index < versions_->size(); ++index) {
+    const char* candidate = versions_->text(index);
+    if (candidate != nullptr && active_version == candidate) { selected_version = index; break; }
+  }
+  if (versions_->size()) versions_->value(selected_version); versions_->callback(version_callback, this);
   auto* action = make_button(x + 700, y + 12, 90, 30, running_ ? "Stop" : "Start"); action->callback(action_callback, this); end();
 }
 void ServiceRow::action_callback(Fl_Widget*, void* data) { auto* row = static_cast<ServiceRow*>(data); const char* selected = row->versions_->text(); row->app_->service_action(row->id_, row->running_, selected ? selected : ""); }
