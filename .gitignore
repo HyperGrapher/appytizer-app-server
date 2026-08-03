@@ -1,0 +1,6 @@
+/build/
+/build-check/
+/build-vcpkg/
+/.vs/
+*.user
+*.suo

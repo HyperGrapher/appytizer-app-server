@@ -1,0 +1,38 @@
+#define AppName "Appytizer App Server"
+#define AppVersion "1.0.0"
+
+[Setup]
+AppId={{D91ED4FC-8CE8-40CA-AB70-9C250EF27EF5}
+AppName={#AppName}
+AppVersion={#AppVersion}
+DefaultDirName={autopf}\Appytizer
+DefaultGroupName=Appytizer
+PrivilegesRequired=admin
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+OutputBaseFilename=AppytizerSetup
+Compression=lzma2
+SolidCompression=yes
+
+[Files]
+Source: "..\build-check\Release\Appytizer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build-check\Release\AppytizerEngine.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\Appytizer"; Filename: "{app}\Appytizer.exe"
+
+[Run]
+Filename: "{app}\AppytizerEngine.exe"; Parameters: "--install-service"; Flags: runhidden waituntilterminated
+Filename: "{app}\Appytizer.exe"; Description: "Launch Appytizer"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\AppytizerEngine.exe"; Parameters: "--uninstall-service"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveEngine"
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var ResultCode: Integer;
+begin
+  { Safe when the service does not exist; prevents a locked engine on upgrade. }
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop AppytizerEngine', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
