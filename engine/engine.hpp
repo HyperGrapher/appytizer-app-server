@@ -4,6 +4,7 @@
 #include "engine/dns/dns_server.hpp"
 #include "engine/ipc/pipe_server.hpp"
 #include "engine/sites/site_registry.hpp"
+#include "engine/sites/folder_watcher.hpp"
 #include <atomic>
 #include <nlohmann/json.hpp>
 
@@ -21,7 +22,9 @@ public:
 private:
   void configure_nginx();
   void rescan_sites_and_refresh_nginx();
+  void publish_status();
+  void publish_sites_changed();
   nlohmann::json service_list() const;
-  ConfigStore config_store_; AppConfig config_; ServiceRegistry services_; SiteRegistry sites_; DnsServer dns_; PipeServer ipc_; std::atomic_bool running_{};
+  ConfigStore config_store_; AppConfig config_; ServiceRegistry services_; SiteRegistry sites_; FolderWatcher watcher_; DnsServer dns_; PipeServer ipc_; std::atomic_bool running_{};
 };
 } // namespace appytizer

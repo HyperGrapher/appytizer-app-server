@@ -125,8 +125,8 @@ bool ui_autostart_enabled() {
 
 class App {
 public:
-  App() : config_(store_.load()) { g_app = this; build_ui(); tray_.create(); refresh_all(); Fl::add_timeout(2.0, timer_callback, this); }
-  ~App() { Fl::remove_timeout(timer_callback, this); g_app = nullptr; }
+  App() : config_(store_.load()) { g_app = this; build_ui(); tray_.create(); client_.subscribe([this](std::string event) { handle_event(std::move(event)); }); refresh_all(); }
+  ~App() { g_app = nullptr; }
   void show() { window_->show(); window_->take_focus(); }
   void quit() { quitting_ = true; window_->hide(); }
   [[nodiscard]] bool running() const { return !quitting_; }
@@ -145,9 +145,8 @@ private:
   Fl_Double_Window* window_{}; std::array<Fl_Group*, 4> views_{}; std::array<Button*, 4> nav_{};
   std::vector<ServiceCard*> dashboard_cards_; Fl_Box *engine_status_{}, *sites_empty_{};
   Fl_Scroll *services_scroll_{}, *sites_scroll_{}; Fl_Input *root_input_{}, *extension_input_{};
-  Fl_Check_Button *minimized_{}, *autostart_{}; bool quitting_{};
+  Fl_Check_Button *minimized_{}, *autostart_{}; bool quitting_{}; int active_view_{};
 
-  static void timer_callback(void* data) { auto* app = static_cast<App*>(data); if (app->running()) { app->refresh_services(false); Fl::repeat_timeout(2.0, timer_callback, data); } }
   static void nav_callback(Fl_Widget*, void* data) { auto* pair = static_cast<std::pair<App*, int>*>(data); pair->first->show_view(pair->second); }
   static void rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("service.rescan", "{}", [app](std::string) { app->refresh_services(true); }); }
   static void sites_rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("sites.rescan", "{}", [app](std::string) { app->refresh_sites(); }); }
@@ -211,18 +210,32 @@ private:
     views_[3]->end();
   }
   void show_view(int index) {
+    active_view_ = index;
     for (int i = 0; i < 4; ++i) { if (i == index) views_[i]->show(); else views_[i]->hide(); nav_[i]->color(i == index ? kPanelHover : kPanel); nav_[i]->labelcolor(i == index ? kAccent : kMuted); nav_[i]->redraw(); }
     if (index == 1) refresh_services(true); if (index == 2) refresh_sites(); window_->redraw();
   }
   void refresh_all() { refresh_services(); refresh_sites(); }
+  void apply_service_status(const nlohmann::json& services) {
+    engine_status_->copy_label("● Engine connected"); engine_status_->labelcolor(kSuccess);
+    for (const auto& service : services)
+      for (auto* card : dashboard_cards_)
+        if (card->id() == service.value("id", "")) card->update(service);
+    engine_status_->redraw();
+  }
+  void handle_event(std::string event) {
+    try {
+      const auto document = nlohmann::json::parse(event);
+      if (document.value("event", "") == "status.update") apply_service_status(document.at("services"));
+      else if (document.value("event", "") == "sites.changed" && active_view_ == 2) populate_sites(document.at("sites"));
+    } catch (...) {}
+  }
   void refresh_services(bool rebuild_services = false) {
     client_.request("service.list", "{}", [this, rebuild_services](std::string response) {
       try {
         const auto document = nlohmann::json::parse(response);
         if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Engine unavailable"));
         const auto& services = document.at("result");
-        engine_status_->copy_label("● Engine connected"); engine_status_->labelcolor(kSuccess);
-        for (const auto& service : services) for (auto* card : dashboard_cards_) if (card->id() == service.value("id", "")) card->update(service);
+        apply_service_status(services);
         if (rebuild_services) populate_services(services);
       } catch (const std::exception& error) {
         const std::string message = std::string("● Engine disconnected — start AppytizerEngine.exe (details: ") + error.what() + ")";
@@ -239,12 +252,15 @@ private:
     client_.request("sites.list", "{}", [this](std::string response) {
       try {
         const auto document = nlohmann::json::parse(response); if (!document.value("ok", false)) return;
-        const auto& sites = document.at("result"); sites_scroll_->clear(); sites_scroll_->begin(); int y = 104;
-        if (sites.empty()) sites_empty_ = make_label(144, 128, 760, 56, "No sites found. Choose a root folder in Settings, then rescan.", kMuted, 13);
-        else for (const auto& site : sites) { new SiteRow(128, y, 808, site, config_.extension); y += 82; }
-        sites_scroll_->end(); sites_scroll_->redraw();
+        populate_sites(document.at("result"));
       } catch (...) {}
     });
+  }
+  void populate_sites(const nlohmann::json& sites) {
+    sites_scroll_->clear(); sites_scroll_->begin(); int y = 104;
+    if (sites.empty()) sites_empty_ = make_label(144, 128, 760, 56, "No sites found. Choose a root folder in Settings, then rescan.", kMuted, 13);
+    else for (const auto& site : sites) { new SiteRow(128, y, 808, site, config_.extension); y += 82; }
+    sites_scroll_->end(); sites_scroll_->redraw();
   }
   void save_settings() {
     config_.root_folder = std::filesystem::u8path(root_input_->value()); config_.extension = extension_input_->value();

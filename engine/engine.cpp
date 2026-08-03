@@ -42,6 +42,14 @@ void Engine::rescan_sites_and_refresh_nginx() {
   if (nginx && was_running.running) nginx->restart(was_running.active_version);
 }
 
+void Engine::publish_status() {
+  ipc_.broadcast(nlohmann::json{{"event", "status.update"}, {"services", service_list()}}.dump());
+}
+
+void Engine::publish_sites_changed() {
+  ipc_.broadcast(nlohmann::json{{"event", "sites.changed"}, {"sites", sites_.list()}}.dump());
+}
+
 bool Engine::start() {
   if (running_) return true;
   services_.detect_all();
@@ -50,11 +58,18 @@ bool Engine::start() {
   if (!dns_.start(config_.extension)) spdlog::warn("DNS server could not bind 127.0.0.1:53");
   ipc_.start([this](std::string_view line) { return handle_message(line); });
   running_ = true;
+  watcher_.start(config_.root_folder, [this] {
+    if (!running_) return;
+    rescan_sites_and_refresh_nginx();
+    publish_sites_changed();
+  });
+  publish_status();
   return true;
 }
 
 void Engine::stop() {
   if (!running_.exchange(false)) return;
+  watcher_.stop();
   ipc_.stop(); dns_.stop();
   for (const auto& provider : services_.all()) provider->stop();
 }
@@ -79,15 +94,16 @@ std::string Engine::handle_message(std::string_view line) {
   if (!request) return response_error("", "invalid request");
   try {
     const auto& command = request->command;
+    if (command == "events.subscribe") return response_ok(request->id);
     if (command == "service.list") return response_ok(request->id, service_list());
     if (command == "sites.list") return response_ok(request->id, sites_.list());
     if (command == "config.get") return response_ok(request->id, {{"root_folder", config_.root_folder.string()}, {"extension", config_.extension}, {"run_minimized", config_.run_minimized}, {"autostart", config_.autostart}});
-    if (command == "sites.rescan") { rescan_sites_and_refresh_nginx(); return response_ok(request->id, sites_.list()); }
-    if (command == "service.rescan") { services_.detect_all(); configure_nginx(); return response_ok(request->id, service_list()); }
-    if (command == "dns.start") return dns_.start(config_.extension) ? response_ok(request->id) : response_error(request->id, "DNS start failed");
-    if (command == "dns.stop") { dns_.stop(); return response_ok(request->id); }
-    if (command == "dns.restart") { dns_.stop(); return dns_.start(config_.extension) ? response_ok(request->id) : response_error(request->id, "DNS restart failed"); }
-    if (command == "stop_all") { dns_.stop(); for (const auto& provider : services_.all()) provider->stop(); return response_ok(request->id); }
+    if (command == "sites.rescan") { rescan_sites_and_refresh_nginx(); publish_sites_changed(); return response_ok(request->id, sites_.list()); }
+    if (command == "service.rescan") { services_.detect_all(); configure_nginx(); publish_status(); return response_ok(request->id, service_list()); }
+    if (command == "dns.start") { const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id) : response_error(request->id, "DNS start failed"); }
+    if (command == "dns.stop") { dns_.stop(); publish_status(); return response_ok(request->id); }
+    if (command == "dns.restart") { dns_.stop(); const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id) : response_error(request->id, "DNS restart failed"); }
+    if (command == "stop_all") { dns_.stop(); for (const auto& provider : services_.all()) provider->stop(); publish_status(); return response_ok(request->id); }
     if (command.starts_with("service.")) {
       const auto id = request->params.value("service", ""); auto* provider = services_.get_by_id(id);
       if (!provider) return response_error(request->id, "unknown service");
@@ -95,6 +111,7 @@ std::string Engine::handle_message(std::string_view line) {
       if (command == "service.start") ok = provider->start(version);
       else if (command == "service.stop") ok = provider->stop();
       else if (command == "service.restart" || command == "service.set_version") ok = provider->restart(version);
+      if (ok) publish_status();
       return ok ? response_ok(request->id) : response_error(request->id, "service operation failed");
     }
     if (command == "config.set") {
@@ -107,7 +124,13 @@ std::string Engine::handle_message(std::string_view line) {
       if (request->params.contains("run_minimized")) config_.run_minimized = request->params["run_minimized"].get<bool>();
       if (request->params.contains("autostart")) config_.autostart = request->params["autostart"].get<bool>();
       if (!config_store_.save(config_)) spdlog::warn("Could not save Appytizer configuration.");
-      rescan_sites_and_refresh_nginx(); return response_ok(request->id);
+      rescan_sites_and_refresh_nginx();
+      watcher_.start(config_.root_folder, [this] {
+        if (!running_) return;
+        rescan_sites_and_refresh_nginx();
+        publish_sites_changed();
+      });
+      publish_status(); publish_sites_changed(); return response_ok(request->id);
     }
     return response_error(request->id, "unknown command");
   } catch (const std::exception& error) {

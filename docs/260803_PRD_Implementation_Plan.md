@@ -240,7 +240,7 @@ Command set to implement: `service.list`, `service.start`, `service.stop`, `serv
 
 - [x] Implement named pipe **server** in Engine (async, `ReadFile`/`WriteFile` overlapped or a simple worker-thread-per-connection model since connection count is trivial)
 - [x] Implement named pipe **client** in Appytizer UI
-- [ ] **Critical FLTK threading note:** FLTK is not thread-safe. IPC responses/pushes arriving on a background thread must be marshaled to the UI thread via `Fl::awake(callback, data)` — never touch FLTK widgets directly from the pipe-reading thread.
+- [x] **Critical FLTK threading note:** FLTK is not thread-safe. IPC responses/pushes arriving on a background thread must be marshaled to the UI thread via `Fl::awake(callback, data)` — never touch FLTK widgets directly from the pipe-reading thread.
 
 - [x] Add this threading rule as a comment at the top of the UI's IPC client file so it isn't relitigated later
 
@@ -317,7 +317,7 @@ Replace the current single-window `Fl_Group` show/hide dashboard/settings patter
 **Dashboard** — at-a-glance grid of `ServiceCard`s (one per detected service + one for "Local DNS Server" itself), each showing: service icon, name, status pill, active version, RAM usage (live, updated from IPC push), Start/Stop/Restart icon buttons.
 
 - [x] Build `ServiceCard` widget (reusable for every service including DNS)
-- [ ] Wire IPC `status.update` push → update card contents without full UI rebuild (update labels/redraw only the changed widgets)
+- [x] Wire IPC `status.update` push → update card contents without full UI rebuild (update labels/redraw only the changed widgets)
 
 **Services** — same cards as Dashboard but with the version-selector chip exposed (dropdown of `available_versions` from detection) for services that have multiple installed versions (e.g. PHP 8.3 / 8.4). Selecting a version calls `service.set_version` then `service.restart`.
 
@@ -328,7 +328,7 @@ Replace the current single-window `Fl_Group` show/hide dashboard/settings patter
 
 - [ ] Build `SiteRow` widget: folder name, detected type badge (PHP/Static — inferred by presence of `index.php` vs `index.html`), the resolved URL (`foldername.local`), a **"Copy URL" button** (rounded, small, clipboard glyph) that calls `OpenClipboard`/`SetClipboardData` with `CF_TEXT`, and an "Open in browser" button (`ShellExecuteW` with the URL)
 - [x] Wire to IPC `sites.list` on tab open, `sites.rescan` on a manual refresh button
-- [ ] (Nice-to-have) live-refresh this list via `ReadDirectoryChangesW` on the root folder in the Engine, pushed as a `sites.changed` event
+- [x] Live-refresh this list via `ReadDirectoryChangesW` on the root folder in the Engine, pushed as a `sites.changed` event
 
 **Settings**
 - [ ] "Run when Windows starts" — existing template logic already does this for the Appytizer UI; note in-code that this only affects the **UI**, since the Engine now autostarts via its own Windows Service registration regardless

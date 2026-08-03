@@ -49,6 +49,7 @@ add_executable(AppytizerEngine
   engine/ipc/pipe_server.cpp
   engine/services/detection_utils.cpp
   engine/services/providers.cpp
+  engine/sites/folder_watcher.cpp
   engine/sites/site_registry.cpp
 )
 target_link_libraries(AppytizerEngine PRIVATE appytizer_common unofficial::sqlite3::sqlite3 spdlog::spdlog
