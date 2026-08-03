@@ -68,7 +68,7 @@ Two separate binaries, communicating over a local named pipe:
 | IPC serialization | nlohmann/json over named pipe | Simple envelope, see §6 |
 | Logging | **spdlog** (engine primarily; UI optional) | Rotating file sink under `%LOCALAPPDATA%\Appytizer\logs` |
 | Build | CMake + vcpkg | vcpkg for sqlite3, nlohmann-json, spdlog; FLTK can stay as your existing setup |
-| Testing | Catch2 or GoogleTest | Unit-test the Engine's non-UI logic: detection parsers, DNS packet handling, config serialization |
+| Testing | Catch2 | Unit/integration-test the Engine's non-UI logic: IPC lifecycle/events, folder notifications, detection parsers, DNS packet handling, and config serialization |
 
 - [x] Set up CMake project with vcpkg manifest (`vcpkg.json`) pinning the above dependencies
 > Note: installed vcpkg packages are used for SQLite, JSON, and spdlog; FLTK is source-pinned to `release-1.4.5`.

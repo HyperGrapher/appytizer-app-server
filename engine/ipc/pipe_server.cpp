@@ -20,6 +20,8 @@ struct PipeServer::Subscriber {
   std::thread writer;
 };
 
+PipeServer::PipeServer() : pipe_name_(kPipeName) {}
+PipeServer::PipeServer(std::wstring pipe_name) : pipe_name_(std::move(pipe_name)) {}
 PipeServer::~PipeServer() { stop(); }
 bool PipeServer::start(Handler handler) {
   if (running_.exchange(true)) return true;
@@ -29,7 +31,12 @@ bool PipeServer::start(Handler handler) {
 }
 void PipeServer::stop() {
   if (!running_.exchange(false)) return;
-  WinHandle wake(CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
+  WinHandle wake(CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr));
+  if (wake) {
+    const char shutdown_request = '\n';
+    DWORD written{};
+    WriteFile(wake.get(), &shutdown_request, 1, &written, nullptr);
+  }
   if (accept_thread_.joinable()) accept_thread_.join();
   std::vector<std::shared_ptr<Subscriber>> subscribers;
   { std::scoped_lock lock(clients_mutex_); subscribers = subscribers_; }
@@ -56,7 +63,7 @@ void PipeServer::run() {
   ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)", SDDL_REVISION_1, &descriptor, nullptr);
   SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
   while (running_) {
-    HANDLE pipe = CreateNamedPipeW(kPipeName, PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+    HANDLE pipe = CreateNamedPipeW(pipe_name_.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
         PIPE_UNLIMITED_INSTANCES, 65536, 65536, 1000, descriptor ? &security : nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
       if (!running_) break;

@@ -6,12 +6,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "common/constants.hpp"
 
 namespace appytizer {
 /// Named-pipe command server with persistent clients for Engine event broadcasts.
 class PipeServer {
 public:
   using Handler = std::function<std::string(std::string_view)>;
+  PipeServer();
+  explicit PipeServer(std::wstring pipe_name);
   ~PipeServer();
   bool start(Handler handler);
   void stop();
@@ -27,5 +30,6 @@ private:
   std::vector<std::shared_ptr<Subscriber>> subscribers_;
   std::vector<std::thread> workers_;
   Handler handler_;
+  std::wstring pipe_name_;
 };
 } // namespace appytizer

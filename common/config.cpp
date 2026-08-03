@@ -23,13 +23,17 @@ void to_json(nlohmann::json& j, const AppConfig& c) {
 }
 AppConfig parse(const nlohmann::json& j) {
   AppConfig c;
-  c.root_folder = path_from_utf8(j.value("root_folder", std::string{}));
-  c.extension = j.value("extension", ".local");
+  if (const auto it = j.find("root_folder"); it != j.end() && it->is_string()) c.root_folder = path_from_utf8(it->get<std::string>());
+  if (const auto it = j.find("extension"); it != j.end() && it->is_string()) c.extension = it->get<std::string>();
   if (c.extension.empty() || c.extension.front() != '.') c.extension.insert(c.extension.begin(), '.');
-  c.run_minimized = j.value("run_minimized", false);
-  c.autostart = j.value("autostart", false);
-  c.active_versions = j.value("active_versions", decltype(c.active_versions){});
-  for (const auto& [id, value] : j.value("service_roots", nlohmann::json::object()).items()) c.service_roots[id] = path_from_utf8(value.get<std::string>());
+  if (const auto it = j.find("run_minimized"); it != j.end() && it->is_boolean()) c.run_minimized = it->get<bool>();
+  if (const auto it = j.find("autostart"); it != j.end() && it->is_boolean()) c.autostart = it->get<bool>();
+  if (const auto it = j.find("active_versions"); it != j.end() && it->is_object()) {
+    for (const auto& [id, value] : it->items()) if (value.is_string()) c.active_versions[id] = value.get<std::string>();
+  }
+  if (const auto it = j.find("service_roots"); it != j.end() && it->is_object()) {
+    for (const auto& [id, value] : it->items()) if (value.is_string()) c.service_roots[id] = path_from_utf8(value.get<std::string>());
+  }
   return c;
 }
 }

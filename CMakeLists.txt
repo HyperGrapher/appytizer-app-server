@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(fltk)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(Catch2 CONFIG REQUIRED)
 
 add_library(appytizer_common
   common/config.cpp
@@ -70,7 +71,16 @@ set_target_properties(AppytizerEngine PROPERTIES OUTPUT_NAME AppytizerEngine)
 
 include(CTest)
 if(BUILD_TESTING)
-  add_executable(appytizer_tests tests/tests.cpp engine/dns/dns_server.cpp engine/services/detection_utils.cpp engine/services/providers.cpp)
-  target_link_libraries(appytizer_tests PRIVATE appytizer_common spdlog::spdlog ws2_32 advapi32 psapi version)
-  add_test(NAME appytizer_tests COMMAND appytizer_tests)
+  include(Catch)
+  add_executable(appytizer_tests
+    tests/tests.cpp
+    engine/dns/dns_server.cpp
+    engine/ipc/pipe_server.cpp
+    engine/services/detection_utils.cpp
+    engine/services/providers.cpp
+    engine/sites/folder_watcher.cpp
+  )
+  target_link_libraries(appytizer_tests PRIVATE appytizer_common Catch2::Catch2WithMain spdlog::spdlog
+    ws2_32 advapi32 psapi version)
+  catch_discover_tests(appytizer_tests PROPERTIES TIMEOUT 20)
 endif()

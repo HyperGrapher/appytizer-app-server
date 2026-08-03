@@ -6,7 +6,7 @@ Appytizer maps each direct subfolder of a configured projects root to `http://<f
 
 - Windows 10 or 11, Visual Studio 2022 with Desktop C++ tools, and CMake 3.21+
 - vcpkg at `C:\Users\<you>\vcpkg` (or another location) with `VCPKG_ROOT` set
-- Installed vcpkg packages for `x64-windows-static`: `sqlite3`, `nlohmann-json`, and `spdlog`
+- Installed vcpkg packages for `x64-windows-static`: `sqlite3`, `nlohmann-json`, `spdlog`, and Catch2 (the manifest installs these automatically)
 - nginx installed locally. Appytizer discovers common install paths, uninstall-registry entries, and `PATH`.
 
 FLTK is fetched by CMake and pinned exactly to `release-1.4.5`.
