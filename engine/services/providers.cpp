@@ -3,6 +3,7 @@
 #include <psapi.h>
 #include <winsvc.h>
 #include <algorithm>
+#include <array>
 #include <regex>
 
 namespace appytizer {
@@ -47,15 +48,41 @@ std::vector<std::filesystem::path> profile_roots(std::wstring_view relative_path
   }
   return result;
 }
+std::filesystem::path bundled_runtime_directory() {
+  std::array<wchar_t, 32768> executable{};
+  const DWORD length = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+  if (length == 0 || length == executable.size()) {
+    return {};
+  }
+  return std::filesystem::path(executable.data()).parent_path() / L"runtime";
+}
+bool is_within(const std::filesystem::path& candidate, const std::filesystem::path& root) {
+  if (root.empty()) {
+    return false;
+  }
+  std::error_code error;
+  const auto normalized_candidate = std::filesystem::weakly_canonical(candidate, error);
+  if (error) {
+    return false;
+  }
+  const auto normalized_root = std::filesystem::weakly_canonical(root, error);
+  if (error) {
+    return false;
+  }
+  const auto relative = normalized_candidate.lexically_relative(normalized_root);
+  return !error && !relative.empty() && !relative.native().starts_with(L"..");
+}
 
 class Provider final : public IServiceProvider {
 public:
   Provider(std::string id, std::string name, std::vector<std::filesystem::path> search_roots,
            std::vector<std::wstring> executable_names, std::vector<std::wstring> service_tokens,
-           std::vector<std::wstring> registry_tokens, std::wstring arguments = {})
+           std::vector<std::wstring> registry_tokens, std::wstring arguments = {},
+           std::filesystem::path preferred_root = {})
       : id_(std::move(id)), name_(std::move(name)), search_roots_(std::move(search_roots)),
         executable_names_(std::move(executable_names)), service_tokens_(std::move(service_tokens)),
-        registry_tokens_(std::move(registry_tokens)), arguments_(std::move(arguments)) {}
+        registry_tokens_(std::move(registry_tokens)), arguments_(std::move(arguments)),
+        preferred_root_(std::move(preferred_root)) {}
 
   std::string id() const override { return id_; }
   std::string display_name() const override { return name_; }
@@ -102,9 +129,15 @@ public:
 
 private:
   void detect_executables() {
-    for (const auto& executable : find_installed_executables(executable_names_, search_roots_, registry_tokens_)) {
-      if (std::ranges::none_of(versions_, [&](const auto& item) { return item.executable_path == executable; }))
-        versions_.push_back({executable_version(executable), executable, false, {}});
+    auto executables = find_installed_executables(executable_names_, search_roots_, registry_tokens_);
+    std::ranges::stable_sort(executables, [this](const auto& left, const auto& right) {
+      return is_within(left, preferred_root_) && !is_within(right, preferred_root_);
+    });
+    for (const auto& executable : executables) {
+      const auto version = executable_version(executable);
+      if (std::ranges::none_of(versions_, [&](const auto& item) { return item.version_label == version; })) {
+        versions_.push_back({version, executable, false, {}});
+      }
     }
   }
   void detect_services() {
@@ -164,6 +197,7 @@ private:
   std::vector<std::filesystem::path> search_roots_;
   std::vector<std::wstring> executable_names_, service_tokens_, registry_tokens_;
   std::wstring arguments_;
+  std::filesystem::path preferred_root_;
   std::vector<InstalledVersion> versions_; mutable std::mutex mutex_;
   WinHandle job_, process_; ServiceStatus status_;
 };
@@ -173,22 +207,28 @@ void register_builtin_providers(ServiceRegistry& registry, const AppConfig& conf
   const auto program_files = environment_path(L"ProgramFiles");
   const auto local = environment_path(L"LOCALAPPDATA");
   const auto chocolatey = environment_path(L"ChocolateyInstall");
+  const auto bundled_runtime = bundled_runtime_directory();
+  const auto bundled_nginx_root = bundled_runtime;
+  const auto bundled_php_root = bundled_runtime / L"php";
+  const auto php_ini = ConfigStore::default_path().parent_path() / L"php" / L"php.ini";
   const auto user_winget_roots = profile_roots(L"AppData\\Local\\Microsoft\\WinGet\\Packages");
   const auto user_program_roots = profile_roots(L"AppData\\Local\\Programs");
-  auto nginx_roots = roots({configured_root(config, "nginx"), L"C:\\nginx", L"C:\\tools\\nginx",
+  auto nginx_roots = roots({configured_root(config, "nginx"), bundled_nginx_root, L"C:\\nginx", L"C:\\tools\\nginx",
                             program_files / L"nginx", chocolatey / L"bin"});
   nginx_roots.insert(nginx_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
   nginx_roots.insert(nginx_roots.end(), user_program_roots.begin(), user_program_roots.end());
-  auto php_roots = roots({configured_root(config, "php"), L"C:\\php", L"C:\\tools\\php",
+  auto php_roots = roots({configured_root(config, "php"), bundled_php_root, L"C:\\php", L"C:\\tools\\php",
                           program_files / L"PHP", local / L"Programs\\PHP", local / L"scoop\\apps\\php"});
   php_roots.insert(php_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
   php_roots.insert(php_roots.end(), user_program_roots.begin(), user_program_roots.end());
   registry.add(std::make_unique<Provider>("nginx", "nginx",
       std::move(nginx_roots),
-      std::vector<std::wstring>{L"nginx.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"nginx"}));
+      std::vector<std::wstring>{L"nginx.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"nginx"},
+      L"", bundled_nginx_root));
   registry.add(std::make_unique<Provider>("php", "PHP",
       std::move(php_roots),
-      std::vector<std::wstring>{L"php-cgi.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"PHP"}, L"-b 127.0.0.1:9000"));
+      std::vector<std::wstring>{L"php-cgi.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"PHP"},
+      L"-c \"" + php_ini.wstring() + L"\" -b 127.0.0.1:9000", bundled_php_root));
   registry.add(std::make_unique<Provider>("mysql", "MySQL",
       roots({configured_root(config, "mysql"), program_files / L"MySQL", program_files / L"MariaDB"}),
       std::vector<std::wstring>{L"mysqld.exe"}, std::vector<std::wstring>{L"mysql", L"mariadb"}, std::vector<std::wstring>{L"MySQL", L"MariaDB"}));

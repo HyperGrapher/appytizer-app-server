@@ -18,6 +18,15 @@ SolidCompression=yes
 Source: "..\build\Release\Appytizer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\Release\AppytizerEngine.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\Release\AppytizerEngine.exe"; DestName: "AppytizerTlsProvisioner.exe"; Flags: dontcopy
+Source: "Output\nginx-1.31.3\*"; DestDir: "{app}\runtime\nginx-1.31.3"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "logs\*,temp\*"
+Source: "Output\php85\*"; DestDir: "{app}\runtime\php"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "Output\php85\php.ini"; DestDir: "{commonappdata}\Appytizer\php"; DestName: "php.ini"; Flags: onlyifdoesntexist uninsneveruninstall
+
+[Dirs]
+Name: "{commonappdata}\Appytizer\php"; Permissions: users-modify
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\runtime\nginx"
 
 [Icons]
 Name: "{group}\Appytizer"; Filename: "{app}\Appytizer.exe"
