@@ -59,7 +59,19 @@ public:
   }
   bool stop() override {
     std::scoped_lock lock(mutex_);
-    if (process_) { TerminateJobObject(job_.get(), 0); process_.reset(); job_.reset(); status_ = {}; return true; }
+    if (process_) {
+      if (!TerminateJobObject(job_.get(), 0)) {
+        return false;
+      }
+      const DWORD wait_result = WaitForSingleObject(process_.get(), 5000);
+      if (wait_result != WAIT_OBJECT_0) {
+        return false;
+      }
+      process_.reset();
+      job_.reset();
+      status_ = {};
+      return true;
+    }
     const auto* selected = select(active_);
     if (!selected || !selected->is_windows_service) return !status_.running;
     return control_scm(*selected, false);

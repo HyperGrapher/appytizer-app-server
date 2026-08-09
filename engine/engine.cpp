@@ -38,31 +38,69 @@ bool run_nginx_validation(const std::filesystem::path& executable,
   return GetExitCodeProcess(process.get(), &exit_code) && exit_code == 0;
 }
 
-bool activate_staging_directory(const std::filesystem::path& staging,
-                                const std::filesystem::path& active) {
-  const auto backup = active.wstring() + L".previous";
+bool activate_staged_configuration(const std::filesystem::path& staging,
+                                   const std::filesystem::path& active) {
+  const auto staged_sites = staging / L"sites";
+  const auto active_sites = active / L"sites";
+  const auto backup_sites = active / L"sites.previous";
+  const auto staged_root = staging / L"runtime" / L"conf" / L"nginx.conf";
+  const auto active_root = active / L"runtime" / L"conf" / L"nginx.conf";
+  const auto backup_root = active_root.wstring() + L".previous";
   std::error_code error;
-  std::filesystem::remove_all(backup, error);
-  error.clear();
-  const bool had_active = std::filesystem::exists(active, error);
+  std::filesystem::create_directories(active_root.parent_path(), error);
   if (error) {
     return false;
   }
-  if (had_active) {
-    std::filesystem::rename(active, backup, error);
+  std::filesystem::remove_all(backup_sites, error);
+  error.clear();
+  std::filesystem::remove(backup_root, error);
+  error.clear();
+
+  const bool had_sites = std::filesystem::exists(active_sites, error);
+  if (error) {
+    return false;
+  }
+  if (had_sites) {
+    std::filesystem::rename(active_sites, backup_sites, error);
     if (error) {
       return false;
     }
   }
-  std::filesystem::rename(staging, active, error);
+  std::filesystem::rename(staged_sites, active_sites, error);
   if (error) {
-    if (had_active) {
+    if (had_sites) {
       std::error_code restore_error;
-      std::filesystem::rename(backup, active, restore_error);
+      std::filesystem::rename(backup_sites, active_sites, restore_error);
     }
     return false;
   }
-  std::filesystem::remove_all(backup, error);
+
+  const bool had_root = std::filesystem::exists(active_root, error);
+  if (!error && had_root) {
+    std::filesystem::rename(active_root, backup_root, error);
+  }
+  if (!error) {
+    std::filesystem::rename(staged_root, active_root, error);
+  }
+  if (error) {
+    std::error_code restore_error;
+    std::filesystem::remove_all(active_sites, restore_error);
+    if (had_sites) {
+      restore_error.clear();
+      std::filesystem::rename(backup_sites, active_sites, restore_error);
+    }
+    if (had_root) {
+      restore_error.clear();
+      std::filesystem::rename(backup_root, active_root, restore_error);
+    }
+    return false;
+  }
+
+  std::filesystem::remove_all(backup_sites, error);
+  error.clear();
+  std::filesystem::remove(backup_root, error);
+  error.clear();
+  std::filesystem::remove_all(staging, error);
   return true;
 }
 } // namespace
@@ -132,7 +170,7 @@ bool Engine::configure_nginx() {
     std::filesystem::remove_all(staging, error);
     return false;
   }
-  if (!activate_staging_directory(staging, active)) {
+  if (!activate_staged_configuration(staging, active)) {
     spdlog::error("Could not atomically activate the validated Appytizer nginx configuration.");
     return false;
   }
@@ -371,7 +409,9 @@ std::string Engine::handle_message(std::string_view line) {
       }
       if (!rescan_sites_and_refresh_nginx()) {
         config_ = previous_config;
-        sites_.rescan(config_.root_folder);
+        if (!rescan_sites_and_refresh_nginx()) {
+          spdlog::error("Could not restore the previous Appytizer configuration after an activation failure.");
+        }
         return response_error(request->id,
                               "Could not activate settings; check TLS status and nginx diagnostics");
       }
