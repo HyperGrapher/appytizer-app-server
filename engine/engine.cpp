@@ -9,7 +9,6 @@ extern "C" BOOL WINAPI DnsFlushResolverCache();
 
 namespace appytizer {
 namespace {
-constexpr wchar_t kNrptKey[] = L"SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient\\DnsPolicyConfig\\Appytizer";
 constexpr char kHostsTag[] = "# Appytizer";
 }
 
@@ -47,13 +46,20 @@ void Engine::start_default_services() {
   }
 }
 
-void Engine::rescan_sites_and_refresh_nginx() {
-  sites_.rescan(config_.root_folder);
-  sync_hosts(sites_.list(), config_.extension);
+bool Engine::rescan_sites_and_refresh_nginx() {
+  if (!sites_.rescan(config_.root_folder)) {
+    spdlog::error("Could not scan the configured projects root.");
+    return false;
+  }
+  if (!sync_hosts(sites_.list(), config_.extension)) {
+    spdlog::error("Could not update the Appytizer hosts entries. The Engine must run elevated.");
+    return false;
+  }
   auto* nginx = services_.get_by_id("nginx");
   const auto was_running = nginx ? nginx->status() : ServiceStatus{};
   configure_nginx();
   if (nginx && was_running.running) nginx->restart(was_running.active_version);
+  return true;
 }
 
 void Engine::publish_status() {
@@ -67,15 +73,14 @@ void Engine::publish_sites_changed() {
 bool Engine::start() {
   if (running_) return true;
   services_.detect_all();
-  rescan_sites_and_refresh_nginx();
+  if (!rescan_sites_and_refresh_nginx()) return false;
   start_default_services();
-  apply_nrpt(config_.extension);
   if (!dns_.start(config_.extension)) spdlog::warn("DNS server could not bind 127.0.0.1:53");
   ipc_.start([this](std::string_view line) { return handle_message(line); });
   running_ = true;
   watcher_.start(config_.root_folder, [this] {
     if (!running_) return;
-    rescan_sites_and_refresh_nginx();
+    if (!rescan_sites_and_refresh_nginx()) return;
     publish_sites_changed();
   });
   publish_status();
@@ -113,7 +118,11 @@ std::string Engine::handle_message(std::string_view line) {
     if (command == "service.list") return response_ok(request->id, service_list());
     if (command == "sites.list") return response_ok(request->id, sites_.list());
     if (command == "config.get") return response_ok(request->id, {{"root_folder", config_.root_folder.string()}, {"extension", config_.extension}, {"run_minimized", config_.run_minimized}, {"autostart", config_.autostart}});
-    if (command == "sites.rescan") { rescan_sites_and_refresh_nginx(); publish_sites_changed(); return response_ok(request->id, sites_.list()); }
+    if (command == "sites.rescan") {
+      if (!rescan_sites_and_refresh_nginx()) return response_error(request->id, "Could not apply site resolution; run the Engine elevated");
+      publish_sites_changed();
+      return response_ok(request->id, sites_.list());
+    }
     if (command == "service.rescan") { services_.detect_all(); configure_nginx(); publish_status(); return response_ok(request->id, service_list()); }
     if (command == "dns.start") { const bool ok = dns_.start(config_.extension); if (ok) publish_status(); return ok ? response_ok(request->id, service_list()) : response_error(request->id, "DNS start failed"); }
     if (command == "dns.stop") { dns_.stop(); publish_status(); return response_ok(request->id, service_list()); }
@@ -130,19 +139,31 @@ std::string Engine::handle_message(std::string_view line) {
       return ok ? response_ok(request->id, service_list()) : response_error(request->id, "service operation failed");
     }
     if (command == "config.set") {
+      const AppConfig previousConfig = config_;
       if (request->params.contains("root_folder")) config_.root_folder = request->params["root_folder"].get<std::string>();
       if (request->params.contains("extension")) {
-        remove_nrpt(); dns_.stop(); config_.extension = request->params["extension"].get<std::string>();
+        config_.extension = request->params["extension"].get<std::string>();
         if (config_.extension.empty() || config_.extension.front() != '.') config_.extension.insert(config_.extension.begin(), '.');
-        apply_nrpt(config_.extension); dns_.start(config_.extension);
       }
       if (request->params.contains("run_minimized")) config_.run_minimized = request->params["run_minimized"].get<bool>();
       if (request->params.contains("autostart")) config_.autostart = request->params["autostart"].get<bool>();
-      if (!config_store_.save(config_)) spdlog::warn("Could not save Appytizer configuration.");
-      rescan_sites_and_refresh_nginx();
+      if (!rescan_sites_and_refresh_nginx()) {
+        config_ = previousConfig;
+        if (!sites_.rescan(config_.root_folder)) spdlog::error("Could not restore the previous site scan.");
+        return response_error(request->id, "Could not update the hosts file; run the Engine elevated");
+      }
+      if (!config_store_.save(config_)) {
+        config_ = previousConfig;
+        if (!rescan_sites_and_refresh_nginx()) spdlog::error("Could not restore the previous Appytizer configuration.");
+        return response_error(request->id, "Could not save Appytizer configuration");
+      }
+      if (config_.extension != previousConfig.extension) {
+        dns_.stop();
+        dns_.start(config_.extension);
+      }
       watcher_.start(config_.root_folder, [this] {
         if (!running_) return;
-        rescan_sites_and_refresh_nginx();
+        if (!rescan_sites_and_refresh_nginx()) return;
         publish_sites_changed();
       });
       publish_status(); publish_sites_changed(); return response_ok(request->id);
@@ -153,16 +174,6 @@ std::string Engine::handle_message(std::string_view line) {
   }
 }
 
-bool Engine::apply_nrpt(std::string_view extension) {
-  HKEY key{};
-  if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, kNrptKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return false;
-  const std::wstring name(extension.begin(), extension.end()), servers = L"127.0.0.1"; DWORD options = 0;
-  RegSetValueExW(key, L"Name", 0, REG_SZ, reinterpret_cast<const BYTE*>(name.c_str()), static_cast<DWORD>((name.size() + 1) * sizeof(wchar_t)));
-  RegSetValueExW(key, L"GenericDNSServers", 0, REG_SZ, reinterpret_cast<const BYTE*>(servers.c_str()), static_cast<DWORD>((servers.size() + 1) * sizeof(wchar_t)));
-  RegSetValueExW(key, L"ConfigOptions", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&options), sizeof(options));
-  RegCloseKey(key); DnsFlushResolverCache(); return true;
-}
-bool Engine::remove_nrpt() { const LONG result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, kNrptKey); DnsFlushResolverCache(); return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND; }
 bool Engine::sync_hosts(const nlohmann::json& sites, std::string_view extension) {
   wchar_t windows[MAX_PATH]{}; if (!GetWindowsDirectoryW(windows, MAX_PATH)) return false;
   const auto path = std::filesystem::path(windows) / L"System32" / L"drivers" / L"etc" / L"hosts"; std::ifstream input(path); if (!input) return false;

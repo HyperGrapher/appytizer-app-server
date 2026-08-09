@@ -59,7 +59,6 @@ bool install() {
 }
 
 bool uninstall() {
-  appytizer::Engine::remove_nrpt();
   appytizer::Engine::sync_hosts(nlohmann::json::array(), "");
   appytizer::ServiceHandle manager(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT));
   appytizer::ServiceHandle service(manager ? OpenServiceW(manager.get(), appytizer::kServiceName,

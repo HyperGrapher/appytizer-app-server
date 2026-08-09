@@ -1,6 +1,6 @@
 # Appytizer App Server
 
-Appytizer maps each direct subfolder of a configured projects root to `http://<folder>.local`. It has a FLTK tray UI and a separate Engine that manages local DNS, hosts entries, nginx, PHP, and detected database services.
+Appytizer maps each direct subfolder of a configured projects root to `http://<folder>.test`. It has a FLTK tray UI and a separate Engine that manages local DNS, hosts entries, nginx, PHP, and detected database services.
 
 ## Prerequisites
 
@@ -34,7 +34,7 @@ Do not pass `$env:VCPKG_ROOT/...` literally from Git Bash or cmd: that syntax is
 
 ## Run locally
 
-The Engine must run elevated in development because Windows requires elevation to update the managed `hosts` entries and NRPT rule. Open PowerShell in the repository and run:
+The Engine must run elevated in development because Windows requires elevation to update the managed `hosts` entries. Open PowerShell in the repository and run:
 
 ```powershell
 Start-Process .\build\Release\AppytizerEngine.exe -ArgumentList '--run-console' -Verb RunAs
@@ -53,8 +53,8 @@ C:\appitizer\testy\index.html
 Appytizer watches the configured projects root while the Engine is running. Adding, removing, or renaming a direct project folder automatically updates SQLite, managed hosts entries, nginx virtual-host files, and the visible Sites list; Appytizer-managed nginx is refreshed when it is already running. **Rescan folders** remains available as an explicit recovery action. On Engine startup, the first detected PHP and nginx versions are started automatically; the Dashboard or Services page can still restart them manually.
 
 ```powershell
-curl.exe --noproxy '*' http://hello.local/
-curl.exe --noproxy '*' http://testy.local/
+curl.exe --noproxy '*' http://hello.test/
+curl.exe --noproxy '*' http://testy.test/
 ```
 
 If nginx was already started outside Appytizer, it may already own port 80 and serve its stock welcome page. Stop that existing nginx master before starting nginx from Appytizer; only one nginx listener can own port 80.
@@ -63,10 +63,10 @@ If nginx was already started outside Appytizer, it may already own port 80 and s
 
 ```powershell
 # Browser-style resolution uses the managed hosts entry.
-ping hello.local
+ping hello.test
 
 # Query Appytizer's loopback DNS responder directly.
-Resolve-DnsName hello.local -Type A -Server 127.0.0.1 -DnsOnly
+Resolve-DnsName hello.test -Type A -Server 127.0.0.1 -DnsOnly
 
 # Check the active listener on port 80.
 Get-NetTCPConnection -LocalPort 80 -State Listen

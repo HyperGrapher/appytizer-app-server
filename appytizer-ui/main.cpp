@@ -283,11 +283,29 @@ private:
     sites_scroll_->end(); sites_scroll_->redraw();
   }
   void save_settings() {
-    config_.root_folder = std::filesystem::u8path(root_input_->value()); config_.extension = extension_input_->value();
-    if (config_.extension.empty() || config_.extension.front() != '.') config_.extension.insert(config_.extension.begin(), '.');
-    config_.run_minimized = minimized_->value() != 0; config_.autostart = autostart_->value() != 0;
-    set_ui_autostart(config_.autostart); store_.save(config_);
-    client_.request("config.set", nlohmann::json{{"root_folder", config_.root_folder.string()}, {"extension", config_.extension}, {"run_minimized", config_.run_minimized}, {"autostart", config_.autostart}}.dump(), [this](std::string) { extension_input_->value(config_.extension.c_str()); refresh_all(); });
+    appytizer::AppConfig updated = config_;
+    updated.root_folder = std::filesystem::u8path(root_input_->value());
+    updated.extension = extension_input_->value();
+    if (updated.extension.empty() || updated.extension.front() != '.') updated.extension.insert(updated.extension.begin(), '.');
+    updated.run_minimized = minimized_->value() != 0;
+    updated.autostart = autostart_->value() != 0;
+    const auto params = nlohmann::json{{"root_folder", updated.root_folder.string()}, {"extension", updated.extension},
+        {"run_minimized", updated.run_minimized}, {"autostart", updated.autostart}}.dump();
+    client_.request("config.set", params, [this, updated = std::move(updated)](std::string response) mutable {
+      try {
+        const auto document = nlohmann::json::parse(response);
+        if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Settings could not be applied"));
+        config_ = std::move(updated);
+        set_ui_autostart(config_.autostart);
+        extension_input_->value(config_.extension.c_str());
+        refresh_all();
+      } catch (const std::exception& error) {
+        const std::string message = std::string("● Settings not applied: ") + error.what();
+        engine_status_->copy_label(message.c_str());
+        engine_status_->labelcolor(kDanger);
+        engine_status_->redraw();
+      }
+    });
   }
   void browse() {
     IFileOpenDialog* dialog{}; if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return;

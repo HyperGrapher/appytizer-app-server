@@ -16,13 +16,11 @@ public:
   bool start(); void stop();
   void wait(HANDLE stop_event) const;
   [[nodiscard]] std::string handle_message(std::string_view line);
-  static bool apply_nrpt(std::string_view extension);
-  static bool remove_nrpt();
   static bool sync_hosts(const nlohmann::json& sites, std::string_view extension);
 private:
   void configure_nginx();
   void start_default_services();
-  void rescan_sites_and_refresh_nginx();
+  [[nodiscard]] bool rescan_sites_and_refresh_nginx();
   void publish_status();
   void publish_sites_changed();
   nlohmann::json service_list() const;

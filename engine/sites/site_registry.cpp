@@ -8,6 +8,41 @@ SiteRegistry::SiteRegistry() { const auto path=ConfigStore::default_path().paren
 SiteRegistry::~SiteRegistry(){ if(db_) sqlite3_close(db_); }
 bool SiteRegistry::rescan(const std::filesystem::path& root) { if(!db_) return false; sqlite3_exec(db_,"BEGIN; DELETE FROM sites;",nullptr,nullptr,nullptr); std::error_code ec; if(std::filesystem::is_directory(root,ec)) for(const auto& entry:std::filesystem::directory_iterator(root,ec)) if(entry.is_directory(ec)){ const auto folder=entry.path().filename().string(); const char* type=std::filesystem::exists(entry.path()/"index.php",ec)?"PHP":"Static"; sqlite3_stmt* stmt{}; sqlite3_prepare_v2(db_,"INSERT INTO sites(folder_name,path,detected_type) VALUES(?,?,?);",-1,&stmt,nullptr); sqlite3_bind_text(stmt,1,folder.c_str(),-1,SQLITE_TRANSIENT); const auto path=entry.path().string(); sqlite3_bind_text(stmt,2,path.c_str(),-1,SQLITE_TRANSIENT); sqlite3_bind_text(stmt,3,type,-1,SQLITE_STATIC); sqlite3_step(stmt); sqlite3_finalize(stmt);} return sqlite3_exec(db_,"COMMIT;",nullptr,nullptr,nullptr)==SQLITE_OK; }
 nlohmann::json SiteRegistry::list() const { nlohmann::json result=nlohmann::json::array(); if(!db_) return result; sqlite3_stmt* stmt{}; sqlite3_prepare_v2(db_,"SELECT folder_name,path,detected_type FROM sites ORDER BY folder_name;",-1,&stmt,nullptr); while(sqlite3_step(stmt)==SQLITE_ROW) result.push_back({{"name",reinterpret_cast<const char*>(sqlite3_column_text(stmt,0))},{"path",reinterpret_cast<const char*>(sqlite3_column_text(stmt,1))},{"type",reinterpret_cast<const char*>(sqlite3_column_text(stmt,2))}}); sqlite3_finalize(stmt); return result; }
-bool SiteRegistry::write_nginx_configs(const std::filesystem::path& output,std::string_view extension,std::uint16_t php_port,const std::filesystem::path& fastcgi_params) const { std::error_code ec; std::filesystem::create_directories(output,ec); const auto params=fastcgi_params.empty()?std::string("fastcgi_params"):std::string("\"")+fastcgi_params.generic_string()+"\""; for(const auto& site:list()){ std::ofstream file(output/(site["name"].get<std::string>()+".conf")); if(!file)return false; const auto root=std::filesystem::path(site["path"].get<std::string>()).generic_string(); file<<"server {\n  listen 80;\n  server_name "<<site["name"].get<std::string>()<<extension<<";\n  root \""<<root<<"\";\n  index index.php index.html;\n  location / { try_files $uri $uri/ /index.php?$query_string; }\n  location ~ \\.php$ { include "<<params<<"; fastcgi_pass 127.0.0.1:"<<php_port<<"; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }\n}\n"; } return true; }
-bool SiteRegistry::write_nginx_root_config(const std::filesystem::path& output, const std::filesystem::path& nginx_root) const { std::error_code error; const auto runtime=output.parent_path().parent_path(); std::filesystem::create_directories(output.parent_path(), error); std::filesystem::create_directories(runtime/L"logs", error); for(const auto* name:{L"client_body_temp",L"proxy_temp",L"fastcgi_temp",L"uwsgi_temp",L"scgi_temp"}) std::filesystem::create_directories(runtime/L"temp"/name,error); std::ofstream file(output, std::ios::trunc); if (!file) return false; const auto mime=(nginx_root/L"conf"/L"mime.types").generic_string(); const auto sites=(runtime.parent_path()/L"sites"/L"*.conf").generic_string(); file<<"worker_processes 1;\nerror_log logs/error.log notice;\npid logs/nginx.pid;\nevents { worker_connections 1024; }\nhttp {\n  include \""<<mime<<"\";\n  default_type application/octet-stream;\n  sendfile on;\n  server_tokens off;\n  include \""<<sites<<"\";\n}\n"; return static_cast<bool>(file); }
+bool SiteRegistry::write_nginx_configs(const std::filesystem::path& output, std::string_view extension,
+    std::uint16_t php_port, const std::filesystem::path& fastcgi_params) const {
+  std::error_code error;
+  std::filesystem::create_directories(output, error);
+  if (error) return false;
+
+  const std::filesystem::directory_iterator entries(output, error);
+  if (error) return false;
+  for (const auto& entry : entries) {
+    if (error) return false;
+    const bool isRegularFile = entry.is_regular_file(error);
+    if (error) return false;
+    if (isRegularFile && entry.path().extension() == L".conf") {
+      std::filesystem::remove(entry.path(), error);
+      if (error) return false;
+    }
+  }
+
+  const auto params = fastcgi_params.empty()
+      ? std::string("fastcgi_params")
+      : std::string("\"") + fastcgi_params.generic_string() + "\"";
+  for (const auto& site : list()) {
+    const auto name = site["name"].get<std::string>();
+    std::ofstream file(output / (name + ".conf"));
+    if (!file) return false;
+    const auto root = std::filesystem::path(site["path"].get<std::string>()).generic_string();
+    file << "server {\n  listen 80;\n  server_name " << name << extension
+         << ";\n  root \"" << root
+         << "\";\n  index index.php index.html;\n  location / { try_files $uri $uri/ /index.php?$query_string; }\n"
+            "  location ~ \\.php$ { include "
+         << params << "; fastcgi_pass 127.0.0.1:" << php_port
+         << "; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; }\n}\n";
+    if (!file) return false;
+  }
+  return true;
+}
+bool SiteRegistry::write_nginx_root_config(const std::filesystem::path& output, const std::filesystem::path& nginx_root) const { std::error_code error; const auto runtime=output.parent_path().parent_path(); std::filesystem::create_directories(output.parent_path(), error); std::filesystem::create_directories(runtime/L"logs", error); for(const auto* name:{L"client_body_temp",L"proxy_temp",L"fastcgi_temp",L"uwsgi_temp",L"scgi_temp"}) std::filesystem::create_directories(runtime/L"temp"/name,error); std::ofstream file(output, std::ios::trunc); if (!file) return false; const auto mime=(nginx_root/L"conf"/L"mime.types").generic_string(); const auto sites=(runtime.parent_path()/L"sites"/L"*.conf").generic_string(); file<<"worker_processes 1;\nerror_log logs/error.log notice;\npid logs/nginx.pid;\nevents { worker_connections 1024; }\nhttp {\n  include \""<<mime<<"\";\n  default_type application/octet-stream;\n  sendfile on;\n  server_tokens off;\n  server { listen 80 default_server; server_name _; return 404; }\n  include \""<<sites<<"\";\n}\n"; return static_cast<bool>(file); }
 } // namespace appytizer
