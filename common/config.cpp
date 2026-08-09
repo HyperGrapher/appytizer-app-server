@@ -7,6 +7,10 @@
 
 namespace appytizer {
 namespace {
+bool has_data_directory_override() {
+  return GetEnvironmentVariableW(L"APPYTIZER_DATA_DIR", nullptr, 0) > 0;
+}
+
 std::filesystem::path path_from_utf8(const std::string& value) {
   if (value.empty()) return {};
   const int size = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
@@ -44,12 +48,29 @@ std::filesystem::path ConfigStore::default_path() {
     override_path.resize(wcslen(override_path.c_str()));
     return std::filesystem::path(override_path) / L"config.json";
   }
-  PWSTR raw{}; std::filesystem::path path = L".";
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw))) { path = raw; CoTaskMemFree(raw); }
+  PWSTR raw{};
+  std::filesystem::path path = L"C:\\ProgramData";
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_CREATE, nullptr, &raw))) {
+    path = raw;
+    CoTaskMemFree(raw);
+  }
+  return path / kApplicationId / L"config.json";
+}
+std::filesystem::path ConfigStore::legacy_user_path() {
+  PWSTR raw{};
+  std::filesystem::path path = L".";
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw))) {
+    path = raw;
+    CoTaskMemFree(raw);
+  }
   return path / kApplicationId / L"config.json";
 }
 AppConfig ConfigStore::load() const {
   std::scoped_lock lock(mutex_); std::ifstream input(path_);
+  if (!input && !has_data_directory_override() && path_ == default_path()) {
+    input.clear();
+    input.open(legacy_user_path());
+  }
   if (!input) return {};
   try { nlohmann::json j; input >> j; return parse(j); } catch (...) { return {}; }
 }

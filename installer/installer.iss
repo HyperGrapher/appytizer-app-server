@@ -15,9 +15,9 @@ Compression=lzma2
 SolidCompression=yes
 
 [Files]
-Source: "..\build-check\Release\Appytizer.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\build-check\Release\AppytizerEngine.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\build-check\Release\AppytizerEngine.exe"; DestName: "AppytizerTlsProvisioner.exe"; Flags: dontcopy
+Source: "..\build\Release\Appytizer.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\Release\AppytizerEngine.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\Release\AppytizerEngine.exe"; DestName: "AppytizerTlsProvisioner.exe"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\Appytizer"; Filename: "{app}\Appytizer.exe"

@@ -21,6 +21,7 @@ public:
   [[nodiscard]] AppConfig load() const;
   [[nodiscard]] bool save(const AppConfig& config) const;
   [[nodiscard]] static std::filesystem::path default_path();
+  [[nodiscard]] static std::filesystem::path legacy_user_path();
 private:
   std::filesystem::path path_;
   mutable std::mutex mutex_;

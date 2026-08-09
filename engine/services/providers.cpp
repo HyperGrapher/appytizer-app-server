@@ -34,6 +34,19 @@ std::vector<std::filesystem::path> roots(std::initializer_list<std::filesystem::
   for (const auto& value : values) if (!value.empty()) result.push_back(value);
   return result;
 }
+std::vector<std::filesystem::path> profile_roots(std::wstring_view relative_path) {
+  std::vector<std::filesystem::path> result;
+  std::error_code error;
+  for (const auto& profile : std::filesystem::directory_iterator(L"C:\\Users", error)) {
+    if (error) break;
+    if (!profile.is_directory(error) || error) {
+      error.clear();
+      continue;
+    }
+    result.push_back(profile.path() / relative_path);
+  }
+  return result;
+}
 
 class Provider final : public IServiceProvider {
 public:
@@ -160,11 +173,21 @@ void register_builtin_providers(ServiceRegistry& registry, const AppConfig& conf
   const auto program_files = environment_path(L"ProgramFiles");
   const auto local = environment_path(L"LOCALAPPDATA");
   const auto chocolatey = environment_path(L"ChocolateyInstall");
+  const auto user_winget_roots = profile_roots(L"AppData\\Local\\Microsoft\\WinGet\\Packages");
+  const auto user_program_roots = profile_roots(L"AppData\\Local\\Programs");
+  auto nginx_roots = roots({configured_root(config, "nginx"), L"C:\\nginx", L"C:\\tools\\nginx",
+                            program_files / L"nginx", chocolatey / L"bin"});
+  nginx_roots.insert(nginx_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
+  nginx_roots.insert(nginx_roots.end(), user_program_roots.begin(), user_program_roots.end());
+  auto php_roots = roots({configured_root(config, "php"), L"C:\\php", L"C:\\tools\\php",
+                          program_files / L"PHP", local / L"Programs\\PHP", local / L"scoop\\apps\\php"});
+  php_roots.insert(php_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
+  php_roots.insert(php_roots.end(), user_program_roots.begin(), user_program_roots.end());
   registry.add(std::make_unique<Provider>("nginx", "nginx",
-      roots({configured_root(config, "nginx"), L"C:\\nginx", L"C:\\tools\\nginx", program_files / L"nginx", chocolatey / L"bin"}),
+      std::move(nginx_roots),
       std::vector<std::wstring>{L"nginx.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"nginx"}));
   registry.add(std::make_unique<Provider>("php", "PHP",
-      roots({configured_root(config, "php"), L"C:\\php", L"C:\\tools\\php", program_files / L"PHP", local / L"Programs\\PHP", local / L"scoop\\apps\\php"}),
+      std::move(php_roots),
       std::vector<std::wstring>{L"php-cgi.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"PHP"}, L"-b 127.0.0.1:9000"));
   registry.add(std::make_unique<Provider>("mysql", "MySQL",
       roots({configured_root(config, "mysql"), program_files / L"MySQL", program_files / L"MariaDB"}),

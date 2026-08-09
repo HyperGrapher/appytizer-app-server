@@ -48,6 +48,10 @@ bool activate_staged_configuration(const std::filesystem::path& staging,
   const auto backup_root = active_root.wstring() + L".previous";
   std::error_code error;
   std::filesystem::create_directories(active_root.parent_path(), error);
+  std::filesystem::create_directories(active / L"runtime" / L"logs", error);
+  for (const auto* name : {L"client_body_temp", L"proxy_temp", L"fastcgi_temp", L"uwsgi_temp", L"scgi_temp"}) {
+    std::filesystem::create_directories(active / L"runtime" / L"temp" / name, error);
+  }
   if (error) {
     return false;
   }

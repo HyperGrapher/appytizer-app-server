@@ -44,6 +44,15 @@ void WINAPI service_main(DWORD, wchar_t**) {
 }
 
 bool install() {
+  const auto shared_config_path = appytizer::ConfigStore::default_path();
+  std::error_code config_error;
+  if (!std::filesystem::exists(shared_config_path, config_error) && !config_error) {
+    appytizer::ConfigStore legacy(appytizer::ConfigStore::legacy_user_path());
+    const auto existing_config = legacy.load();
+    if (!existing_config.root_folder.empty() && !appytizer::ConfigStore(shared_config_path).save(existing_config)) {
+      return false;
+    }
+  }
   appytizer::CertificateManager certificates;
   if (!certificates.provision()) return false;
   wchar_t path[32768]{};
