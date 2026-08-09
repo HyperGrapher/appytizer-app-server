@@ -78,11 +78,11 @@ public:
   Provider(std::string id, std::string name, std::vector<std::filesystem::path> search_roots,
            std::vector<std::wstring> executable_names, std::vector<std::wstring> service_tokens,
            std::vector<std::wstring> registry_tokens, std::wstring arguments = {},
-           std::filesystem::path preferred_root = {})
+           std::filesystem::path preferred_root = {}, std::wstring preferred_arguments = {})
       : id_(std::move(id)), name_(std::move(name)), search_roots_(std::move(search_roots)),
         executable_names_(std::move(executable_names)), service_tokens_(std::move(service_tokens)),
         registry_tokens_(std::move(registry_tokens)), arguments_(std::move(arguments)),
-        preferred_root_(std::move(preferred_root)) {}
+        preferred_root_(std::move(preferred_root)), preferred_arguments_(std::move(preferred_arguments)) {}
 
   std::string id() const override { return id_; }
   std::string display_name() const override { return name_; }
@@ -95,7 +95,7 @@ public:
   bool start(const std::string& version) override {
     std::scoped_lock lock(mutex_); const auto* selected = select(version);
     if (!selected) return false; active_ = selected->version_label;
-    return selected->is_windows_service ? control_scm(*selected, true) : spawn(*selected);
+    return selected->is_windows_service ? control_scm(*selected, true) : spawn(*selected, launch_arguments_for(*selected));
   }
   bool stop() override {
     std::scoped_lock lock(mutex_);
@@ -165,11 +165,16 @@ private:
     const auto found = std::ranges::find_if(versions_, [&](const auto& value) { return requested.empty() || value.version_label == requested; });
     return found == versions_.end() ? &versions_.front() : &*found;
   }
-  bool spawn(const InstalledVersion& version) {
+  std::wstring launch_arguments_for(const InstalledVersion& version) const {
+    return is_within(version.executable_path, preferred_root_) && !preferred_arguments_.empty()
+               ? preferred_arguments_
+               : arguments_;
+  }
+  bool spawn(const InstalledVersion& version, const std::wstring& arguments) {
     WinHandle job(CreateJobObjectW(nullptr, nullptr)); JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!job || !SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return false;
-    std::wstring command = L"\"" + version.executable_path.wstring() + L"\" " + arguments_;
+    std::wstring command = L"\"" + version.executable_path.wstring() + L"\" " + arguments;
     STARTUPINFOW startup{sizeof(startup)}; PROCESS_INFORMATION info{};
     if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED,
                         nullptr, version.executable_path.parent_path().c_str(), &startup, &info)) return false;
@@ -198,6 +203,7 @@ private:
   std::vector<std::wstring> executable_names_, service_tokens_, registry_tokens_;
   std::wstring arguments_;
   std::filesystem::path preferred_root_;
+  std::wstring preferred_arguments_;
   std::vector<InstalledVersion> versions_; mutable std::mutex mutex_;
   WinHandle job_, process_; ServiceStatus status_;
 };
@@ -228,7 +234,8 @@ void register_builtin_providers(ServiceRegistry& registry, const AppConfig& conf
   registry.add(std::make_unique<Provider>("php", "PHP",
       std::move(php_roots),
       std::vector<std::wstring>{L"php-cgi.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"PHP"},
-      L"-c \"" + php_ini.wstring() + L"\" -b 127.0.0.1:9000", bundled_php_root));
+      L"-b 127.0.0.1:9000", bundled_php_root,
+      L"-c \"" + php_ini.wstring() + L"\" -b 127.0.0.1:9000"));
   registry.add(std::make_unique<Provider>("mysql", "MySQL",
       roots({configured_root(config, "mysql"), program_files / L"MySQL", program_files / L"MariaDB"}),
       std::vector<std::wstring>{L"mysqld.exe"}, std::vector<std::wstring>{L"mysql", L"mariadb"}, std::vector<std::wstring>{L"MySQL", L"MariaDB"}));
