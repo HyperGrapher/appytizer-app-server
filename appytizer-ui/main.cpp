@@ -1,6 +1,4 @@
-#define NOMINMAX
 #include "appytizer-ui/ipc/pipe_client.hpp"
-#include "common/config.hpp"
 #include "common/constants.hpp"
 #include <windows.h>
 #include <commctrl.h>
@@ -85,7 +83,7 @@ private:
 
 class SiteRow final : public Fl_Group {
 public:
-  SiteRow(int x, int y, int w, const nlohmann::json& site, std::string extension);
+  SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled);
 private:
   static void copy_callback(Fl_Widget*, void* data);
   static void open_callback(Fl_Widget*, void* data);
@@ -121,15 +119,9 @@ bool set_ui_autostart(bool enabled) {
   } else result = RegDeleteValueW(key, appytizer::kApplicationId);
   RegCloseKey(key); return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
 }
-bool ui_autostart_enabled() {
-  constexpr wchar_t key_name[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; HKEY key{};
-  if (RegOpenKeyExW(HKEY_CURRENT_USER, key_name, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return false;
-  const LONG result = RegQueryValueExW(key, appytizer::kApplicationId, nullptr, nullptr, nullptr, nullptr); RegCloseKey(key); return result == ERROR_SUCCESS;
-}
-
 class App {
 public:
-  App() : config_(store_.load()) { g_app = this; build_ui(); tray_.create(); client_.subscribe([this](std::string event) { handle_event(std::move(event)); }); refresh_all(); }
+  explicit App(bool force_show) : force_show_(force_show) { g_app = this; build_ui(); tray_.create(); client_.subscribe([this](std::string event) { handle_event(std::move(event)); }); refresh_all(); }
   ~App() { g_app = nullptr; }
   void show() { window_->show(); window_->take_focus(); }
   void quit() { quitting_ = true; window_->hide(); }
@@ -145,17 +137,20 @@ public:
   void stop_and_exit() { client_.request("stop_all", "{}", [this](std::string) { quit(); }); }
 
 private:
-  appytizer::ConfigStore store_; appytizer::AppConfig config_; appytizer::PipeClient client_; TrayIcon tray_;
+  struct UiConfig { std::filesystem::path root_folder; bool https_enabled{true}; bool run_minimized{}; bool autostart{}; };
+  UiConfig config_; appytizer::PipeClient client_; TrayIcon tray_;
   Fl_Double_Window* window_{}; std::array<Fl_Group*, 4> views_{}; std::array<Button*, 4> nav_{};
   std::vector<ServiceCard*> dashboard_cards_; std::vector<ServiceRow*> service_rows_; Fl_Box *engine_status_{}, *sites_empty_{};
-  Fl_Scroll *services_scroll_{}, *sites_scroll_{}; Fl_Input *root_input_{}, *extension_input_{};
-  Fl_Check_Button *minimized_{}, *autostart_{}; bool quitting_{}; int active_view_{};
+  Fl_Scroll *services_scroll_{}, *sites_scroll_{}; Fl_Input *root_input_{};
+  Fl_Check_Button *https_{}, *minimized_{}, *autostart_{}; Fl_Box* tls_status_{};
+  bool quitting_{}, force_show_{}, initial_visibility_applied_{}; int active_view_{};
 
   static void nav_callback(Fl_Widget*, void* data) { auto* pair = static_cast<std::pair<App*, int>*>(data); pair->first->show_view(pair->second); }
   static void rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("service.rescan", "{}", [app](std::string) { app->refresh_services(true); }); }
   static void sites_rescan_callback(Fl_Widget*, void* data) { auto* app = static_cast<App*>(data); app->client_.request("sites.rescan", "{}", [app](std::string) { app->refresh_sites(); }); }
   static void save_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->save_settings(); }
   static void browse_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->browse(); }
+  static void repair_tls_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->repair_tls(); }
 
   void build_ui() {
     Fl::background(0x0B, 0x0E, 0x14); Fl::foreground(0xE7, 0xEC, 0xF3); Fl::set_font(FL_FREE_FONT, "Segoe UI");
@@ -205,20 +200,21 @@ private:
     make_label(120, 104, 180, 22, "Projects root folder", kMuted, 12, FL_BOLD);
     root_input_ = new Fl_Input(120, 132, 650, 38); root_input_->color(kPanel); root_input_->textcolor(kText); root_input_->value(config_.root_folder.string().c_str());
     auto* browse_button = make_button(786, 132, 174, 38, "Choose folder"); browse_button->callback(browse_callback, this);
-    make_label(120, 198, 180, 22, "Local domain suffix", kMuted, 12, FL_BOLD);
-    extension_input_ = new Fl_Input(120, 226, 280, 38); extension_input_->color(kPanel); extension_input_->textcolor(kText); extension_input_->value(config_.extension.c_str());
-    autostart_ = new Fl_Check_Button(120, 298, 360, 28, "Run Appytizer UI when I sign in"); autostart_->labelcolor(kText); autostart_->value(ui_autostart_enabled());
-    minimized_ = new Fl_Check_Button(120, 338, 360, 28, "Start the UI minimized to tray"); minimized_->labelcolor(kText); minimized_->value(config_.run_minimized);
-    make_label(120, 378, 700, 36, "The Engine is a separate Windows Service; these options only affect this UI.", kMuted, 11);
-    auto* save = make_button(120, 440, 280, 40, "Save and apply", kAccent); save->callback(save_callback, this);
+    https_ = new Fl_Check_Button(120, 204, 480, 28, "Use trusted HTTPS for <folder>.test"); https_->labelcolor(kText); https_->value(1);
+    tls_status_ = make_label(144, 238, 616, 48, "Checking certificate health…", kMuted, 11);
+    auto* repair = make_button(786, 238, 174, 36, "Repair certificates"); repair->callback(repair_tls_callback, this);
+    autostart_ = new Fl_Check_Button(120, 306, 360, 28, "Run Appytizer UI when I sign in"); autostart_->labelcolor(kText);
+    minimized_ = new Fl_Check_Button(120, 346, 360, 28, "Start the UI minimized to tray"); minimized_->labelcolor(kText);
+    make_label(120, 386, 700, 36, "Sites always use the fixed .test suffix. The Engine owns and persists these settings.", kMuted, 11);
+    auto* save = make_button(120, 448, 280, 40, "Save and apply", kAccent); save->callback(save_callback, this);
     views_[3]->end();
   }
   void show_view(int index) {
     active_view_ = index;
     for (int i = 0; i < 4; ++i) { if (i == index) views_[i]->show(); else views_[i]->hide(); nav_[i]->color(i == index ? kPanelHover : kPanel); nav_[i]->labelcolor(i == index ? kAccent : kMuted); nav_[i]->redraw(); }
-    if (index == 1) refresh_services(true); if (index == 2) refresh_sites(); window_->redraw();
+    if (index == 1) refresh_services(true); if (index == 2) refresh_sites(); if (index == 3) { refresh_config(); refresh_tls(); } window_->redraw();
   }
-  void refresh_all() { refresh_services(); refresh_sites(); }
+  void refresh_all() { refresh_services(); refresh_config(); refresh_tls(); }
   void apply_service_status(const nlohmann::json& services) {
     engine_status_->copy_label("● Engine connected"); engine_status_->labelcolor(kSuccess);
     for (const auto& service : services)
@@ -268,6 +264,50 @@ private:
     for (const auto& service : services) { if (service.value("id", "") == "dns") continue; service_rows_.push_back(new ServiceRow(128, y, 808, service, this)); y += 112; }
     services_scroll_->end(); services_scroll_->redraw();
   }
+  void refresh_config() {
+    client_.request("config.get", "{}", [this](std::string response) {
+      try {
+        const auto document = nlohmann::json::parse(response);
+        if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Engine unavailable"));
+        const auto& result = document.at("result");
+        config_.root_folder = std::filesystem::path(result.value("root_folder", ""));
+        config_.https_enabled = result.value("https_enabled", true);
+        config_.run_minimized = result.value("run_minimized", false);
+        config_.autostart = result.value("autostart", false);
+        root_input_->value(config_.root_folder.string().c_str());
+        https_->value(config_.https_enabled ? 1 : 0);
+        minimized_->value(config_.run_minimized ? 1 : 0);
+        autostart_->value(config_.autostart ? 1 : 0);
+        refresh_sites();
+        if (!initial_visibility_applied_) {
+          initial_visibility_applied_ = true;
+          if (force_show_ || !config_.run_minimized) show();
+        }
+      } catch (...) {
+        if (!initial_visibility_applied_) { initial_visibility_applied_ = true; show(); }
+      }
+    });
+  }
+  void refresh_tls() {
+    client_.request("tls.status", "{}", [this](std::string response) {
+      try {
+        const auto document = nlohmann::json::parse(response);
+        if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Engine unavailable"));
+        const auto& status = document.at("result");
+        const bool ready = status.value("ready", false);
+        std::string text;
+        if (ready) {
+          text = "● Trusted · " + std::to_string(status.value("site_certificate_count", 0)) + " site certificate(s)";
+          const auto expiry = status.value("earliest_expiry", "");
+          if (!expiry.empty()) text += " · earliest expiry " + expiry;
+        } else text = "● " + status.value("error", "TLS is not ready");
+        tls_status_->copy_label(text.c_str()); tls_status_->labelcolor(ready ? kSuccess : kDanger); tls_status_->redraw();
+      } catch (const std::exception& error) {
+        const std::string text = std::string("● Certificate status unavailable: ") + error.what();
+        tls_status_->copy_label(text.c_str()); tls_status_->labelcolor(kDanger); tls_status_->redraw();
+      }
+    });
+  }
   void refresh_sites() {
     client_.request("sites.list", "{}", [this](std::string response) {
       try {
@@ -279,17 +319,16 @@ private:
   void populate_sites(const nlohmann::json& sites) {
     sites_scroll_->clear(); sites_scroll_->begin(); int y = 104;
     if (sites.empty()) sites_empty_ = make_label(144, 128, 760, 56, "No sites found. Choose a root folder in Settings, then rescan.", kMuted, 13);
-    else for (const auto& site : sites) { new SiteRow(128, y, 808, site, config_.extension); y += 82; }
+    else for (const auto& site : sites) { new SiteRow(128, y, 808, site, config_.https_enabled); y += 82; }
     sites_scroll_->end(); sites_scroll_->redraw();
   }
   void save_settings() {
-    appytizer::AppConfig updated = config_;
-    updated.root_folder = std::filesystem::u8path(root_input_->value());
-    updated.extension = extension_input_->value();
-    if (updated.extension.empty() || updated.extension.front() != '.') updated.extension.insert(updated.extension.begin(), '.');
+    UiConfig updated = config_;
+    updated.root_folder = std::filesystem::path(root_input_->value());
+    updated.https_enabled = https_->value() != 0;
     updated.run_minimized = minimized_->value() != 0;
     updated.autostart = autostart_->value() != 0;
-    const auto params = nlohmann::json{{"root_folder", updated.root_folder.string()}, {"extension", updated.extension},
+    const auto params = nlohmann::json{{"root_folder", updated.root_folder.string()}, {"https_enabled", updated.https_enabled},
         {"run_minimized", updated.run_minimized}, {"autostart", updated.autostart}}.dump();
     client_.request("config.set", params, [this, updated = std::move(updated)](std::string response) mutable {
       try {
@@ -297,7 +336,6 @@ private:
         if (!document.value("ok", false)) throw std::runtime_error(document.value("error", "Settings could not be applied"));
         config_ = std::move(updated);
         set_ui_autostart(config_.autostart);
-        extension_input_->value(config_.extension.c_str());
         refresh_all();
       } catch (const std::exception& error) {
         const std::string message = std::string("● Settings not applied: ") + error.what();
@@ -306,6 +344,28 @@ private:
         engine_status_->redraw();
       }
     });
+  }
+  void repair_tls() {
+    wchar_t executable[32768]{};
+    if (!GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)))) return;
+    const auto engine = std::filesystem::path(executable).parent_path() / L"AppytizerEngine.exe";
+    SHELLEXECUTEINFOW launch{sizeof(launch)};
+    launch.fMask = SEE_MASK_NOCLOSEPROCESS;
+    launch.lpVerb = L"runas";
+    launch.lpFile = engine.c_str();
+    launch.lpParameters = L"--provision-tls";
+    launch.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&launch) || !launch.hProcess) {
+      tls_status_->copy_label("● Certificate repair was cancelled or could not start.");
+      tls_status_->labelcolor(kDanger); tls_status_->redraw(); return;
+    }
+    WaitForSingleObject(launch.hProcess, INFINITE);
+    DWORD exit_code{}; GetExitCodeProcess(launch.hProcess, &exit_code); CloseHandle(launch.hProcess);
+    if (exit_code != 0) {
+      tls_status_->copy_label("● Certificate repair failed. See the Engine log for details.");
+      tls_status_->labelcolor(kDanger); tls_status_->redraw(); return;
+    }
+    client_.request("sites.rescan", "{}", [this](std::string) { refresh_tls(); refresh_sites(); });
   }
   void browse() {
     IFileOpenDialog* dialog{}; if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return;
@@ -327,7 +387,7 @@ void ServiceCard::update(const nlohmann::json& service) {
   running_ = service.value("running", false); const auto& installations = service.value("installations", nlohmann::json::array());
   status_->copy_label(running_ ? "● Running" : "● Stopped"); status_->labelcolor(running_ ? kSuccess : kDanger);
   std::string details;
-  if (id_ == "dns") details = service.value("version", ".local") + "  ·  loopback port 53";
+  if (id_ == "dns") details = service.value("version", ".test") + "  ·  loopback port 53";
   else if (installations.empty()) details = "Not detected — see Services";
   else details = std::to_string(installations.size()) + " installation" + (installations.size() == 1 ? "" : "s") + "  ·  " + service.value("version", "");
   details_->copy_label(details.c_str()); action_->copy_label(running_ ? "Stop" : "Start"); action_->activate();
@@ -378,14 +438,17 @@ void ServiceRow::set_disconnected() {
 void ServiceRow::action_callback(Fl_Widget*, void* data) { auto* row = static_cast<ServiceRow*>(data); const char* selected = row->versions_->text(); row->app_->service_action(row->id_, row->running_, selected ? selected : ""); }
 void ServiceRow::version_callback(Fl_Widget*, void* data) { auto* row = static_cast<ServiceRow*>(data); if (const char* selected = row->versions_->text()) row->app_->select_version(row->id_, selected); }
 
-SiteRow::SiteRow(int x, int y, int w, const nlohmann::json& site, std::string extension)
-    : Fl_Group(x, y, w, 66), url_("http://" + site.value("name", "") + extension) {
+SiteRow::SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled)
+    : Fl_Group(x, y, w, 66), url_((https_enabled ? "https://" : "http://") + site.value("hostname", "")) {
   begin(); auto* panel = new Panel(x, y, w, 66); panel->color(kPanel);
   make_label(x + 16, y + 8, 190, 22, site.value("name", ""), kText, 13, FL_BOLD);
-  make_label(x + 16, y + 32, 190, 18, site.value("type", ""), kMuted, 11);
-  make_label(x + 220, y + 20, 350, 22, url_, kAccent, 11);
+  const bool valid = site.value("valid", false);
+  make_label(x + 16, y + 32, 190, 18, valid ? site.value("type", "") : "Invalid folder name", valid ? kMuted : kDanger, 11);
+  make_label(x + 220, y + 12, 350, 42, valid ? url_ : site.value("error", "Invalid DNS label"), valid ? kAccent : kDanger, 11);
   auto* copy = make_button(x + 590, y + 16, 94, 32, "Copy URL"); copy->callback(copy_callback, this);
-  auto* open = make_button(x + 696, y + 16, 94, 32, "Open"); open->callback(open_callback, this); end();
+  auto* open = make_button(x + 696, y + 16, 94, 32, "Open"); open->callback(open_callback, this);
+  if (!valid) { copy->deactivate(); open->deactivate(); }
+  end();
 }
 void SiteRow::copy_callback(Fl_Widget*, void* data) {
   const auto& url = static_cast<SiteRow*>(data)->url_; if (!OpenClipboard(nullptr)) return; EmptyClipboard();
@@ -408,8 +471,9 @@ LRESULT CALLBACK tray_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
 } // namespace
 
 int main(int argc, char** argv) {
-  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); appytizer::ConfigStore store; App app;
+  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   const bool force_show = argc > 1 && std::string_view(argv[1]) == "--show";
-  if (force_show || !store.load().run_minimized) app.show(); while (app.running() && Fl::wait()) {}
+  App app(force_show);
+  while (app.running()) { Fl::wait(0.25); }
   CoUninitialize(); return 0;
 }

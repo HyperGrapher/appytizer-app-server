@@ -14,15 +14,14 @@ public:
   ~DnsServer();
   DnsServer(const DnsServer&) = delete;
   DnsServer& operator=(const DnsServer&) = delete;
-  bool start(std::string extension);
+  bool start();
   void stop();
   [[nodiscard]] bool running() const { return running_; }
   [[nodiscard]] static std::string decode_question_name(std::span<const std::uint8_t> packet, std::size_t& offset);
-  [[nodiscard]] static std::vector<std::uint8_t> make_response(std::span<const std::uint8_t> query, std::string_view extension);
+  [[nodiscard]] static std::vector<std::uint8_t> make_response(std::span<const std::uint8_t> query);
 private:
   void run();
   std::atomic_bool running_{};
-  std::string extension_{".local"};
   std::thread thread_;
   std::uintptr_t socket_{~std::uintptr_t{0}};
 };

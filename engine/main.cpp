@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "common/constants.hpp"
 #include "common/win_handle.hpp"
+#include "engine/tls/certificate_manager.hpp"
 #include <windows.h>
 #include <winsvc.h>
 #include <string_view>
@@ -43,6 +44,8 @@ void WINAPI service_main(DWORD, wchar_t**) {
 }
 
 bool install() {
+  appytizer::CertificateManager certificates;
+  if (!certificates.provision()) return false;
   wchar_t path[32768]{};
   if (!GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)))) return false;
   appytizer::ServiceHandle manager(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE));
@@ -50,7 +53,14 @@ bool install() {
   appytizer::ServiceHandle service(CreateServiceW(manager.get(), appytizer::kServiceName,
       appytizer::kServiceDisplayName, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
       SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, path, nullptr, nullptr, nullptr, nullptr, nullptr));
-  if (!service && GetLastError() == ERROR_SERVICE_EXISTS) return true;
+  if (!service && GetLastError() == ERROR_SERVICE_EXISTS) {
+    service.reset(OpenServiceW(manager.get(), appytizer::kServiceName, SERVICE_START | SERVICE_QUERY_STATUS));
+    if (!service) return false;
+    SERVICE_STATUS_PROCESS status{}; DWORD bytes{};
+    if (QueryServiceStatusEx(service.get(), SC_STATUS_PROCESS_INFO, reinterpret_cast<BYTE*>(&status), sizeof(status), &bytes) &&
+        status.dwCurrentState == SERVICE_RUNNING) return true;
+    return StartServiceW(service.get(), 0, nullptr) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+  }
   if (!service) return false;
   SC_ACTION actions[3] = {{SC_ACTION_RESTART, 5000}, {SC_ACTION_RESTART, 5000}, {SC_ACTION_RESTART, 5000}};
   SERVICE_FAILURE_ACTIONSW failure{60, nullptr, nullptr, 3, actions};
@@ -59,14 +69,25 @@ bool install() {
 }
 
 bool uninstall() {
-  appytizer::Engine::sync_hosts(nlohmann::json::array(), "");
   appytizer::ServiceHandle manager(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT));
   appytizer::ServiceHandle service(manager ? OpenServiceW(manager.get(), appytizer::kServiceName,
       SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS) : nullptr);
-  if (!service) return GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST;
-  SERVICE_STATUS status{};
-  ControlService(service.get(), SERVICE_CONTROL_STOP, &status);
-  return DeleteService(service.get()) != FALSE;
+  if (service) {
+    SERVICE_STATUS status{};
+    ControlService(service.get(), SERVICE_CONTROL_STOP, &status);
+    for (int attempt = 0; attempt < 100; ++attempt) {
+      SERVICE_STATUS_PROCESS current{}; DWORD bytes{};
+      if (!QueryServiceStatusEx(service.get(), SC_STATUS_PROCESS_INFO, reinterpret_cast<BYTE*>(&current), sizeof(current), &bytes) ||
+          current.dwCurrentState == SERVICE_STOPPED) break;
+      Sleep(100);
+    }
+  } else if (GetLastError() != ERROR_SERVICE_DOES_NOT_EXIST) {
+    return false;
+  }
+  if (!appytizer::Engine::sync_hosts(nlohmann::json::array())) return false;
+  appytizer::CertificateManager certificates;
+  if (!certificates.remove()) return false;
+  return !service || DeleteService(service.get()) != FALSE;
 }
 
 int run_console() {
@@ -95,6 +116,8 @@ int wmain(int argc, wchar_t** argv) {
     const std::wstring_view arg = argv[1];
     if (arg == L"--install-service") return install() ? 0 : 1;
     if (arg == L"--uninstall-service") return uninstall() ? 0 : 1;
+    if (arg == L"--provision-tls") { appytizer::CertificateManager certificates; return certificates.provision() ? 0 : 1; }
+    if (arg == L"--remove-tls") { appytizer::CertificateManager certificates; return certificates.remove() ? 0 : 1; }
     if (arg == L"--run-console") return run_console();
   }
   SERVICE_TABLE_ENTRYW table[] = {{const_cast<LPWSTR>(appytizer::kServiceName), service_main}, {nullptr, nullptr}};

@@ -34,6 +34,7 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 add_library(appytizer_common
   common/config.cpp
@@ -48,13 +49,14 @@ add_executable(AppytizerEngine
   engine/engine.cpp
   engine/dns/dns_server.cpp
   engine/ipc/pipe_server.cpp
+  engine/tls/certificate_manager.cpp
   engine/services/detection_utils.cpp
   engine/services/providers.cpp
   engine/sites/folder_watcher.cpp
   engine/sites/site_registry.cpp
 )
 target_link_libraries(AppytizerEngine PRIVATE appytizer_common unofficial::sqlite3::sqlite3 spdlog::spdlog
-  advapi32 dnsapi iphlpapi psapi ws2_32 shell32 version)
+  OpenSSL::Crypto advapi32 crypt32 dnsapi iphlpapi psapi ws2_32 shell32 version)
 
 add_executable(Appytizer WIN32 appytizer-ui/main.cpp appytizer-ui/ipc/pipe_client.cpp src/app.rc)
 target_link_libraries(Appytizer PRIVATE appytizer_common fltk::fltk spdlog::spdlog
@@ -74,13 +76,16 @@ if(BUILD_TESTING)
   include(Catch)
   add_executable(appytizer_tests
     tests/tests.cpp
+    engine/engine.cpp
     engine/dns/dns_server.cpp
     engine/ipc/pipe_server.cpp
+    engine/sites/site_registry.cpp
+    engine/tls/certificate_manager.cpp
     engine/services/detection_utils.cpp
     engine/services/providers.cpp
     engine/sites/folder_watcher.cpp
   )
-  target_link_libraries(appytizer_tests PRIVATE appytizer_common Catch2::Catch2WithMain spdlog::spdlog
-    ws2_32 advapi32 psapi version)
+  target_link_libraries(appytizer_tests PRIVATE appytizer_common unofficial::sqlite3::sqlite3 Catch2::Catch2WithMain spdlog::spdlog
+    OpenSSL::Crypto ws2_32 advapi32 crypt32 dnsapi shell32 psapi version)
   catch_discover_tests(appytizer_tests PROPERTIES TIMEOUT 20)
 endif()

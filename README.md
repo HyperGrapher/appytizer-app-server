@@ -1,75 +1,118 @@
 # Appytizer App Server
 
-Appytizer maps each direct subfolder of a configured projects root to `http://<folder>.test`. It has a FLTK tray UI and a separate Engine that manages local DNS, hosts entries, nginx, PHP, and detected database services.
+Appytizer maps each valid direct subfolder of a configured projects root to
+`https://<folder>.test`. It includes a non-elevated FLTK tray UI and a Windows
+Service Engine that owns configuration, hosts entries, certificates, nginx,
+PHP, and detected database services.
+
+HTTPS is enabled by default. Appytizer creates its own machine-wide development
+CA and an exact certificate for each site, while valid HTTP requests redirect
+to HTTPS with status `308`. HTTPS can be disabled in Settings; Appytizer then
+serves sites over HTTP only and retains certificates for quick re-enablement.
+Appytizer never emits HSTS headers.
 
 ## Prerequisites
 
 - Windows 10 or 11, Visual Studio 2022 with Desktop C++ tools, and CMake 3.21+
-- vcpkg at `C:\Users\<you>\vcpkg` (or another location) with `VCPKG_ROOT` set
-- Installed vcpkg packages for `x64-windows-static`: `sqlite3`, `nlohmann-json`, `spdlog`, and Catch2 (the manifest installs these automatically)
-- nginx installed locally. Appytizer discovers common install paths, uninstall-registry entries, and `PATH`.
+- vcpkg with `VCPKG_ROOT` set
+- nginx installed locally; Appytizer discovers common install paths, registry
+  entries, and `PATH`
 
-FLTK is fetched by CMake and pinned exactly to `release-1.4.5`.
+The vcpkg manifest installs sqlite3, nlohmann-json, spdlog, Catch2, and OpenSSL
+for `x64-windows-static`. FLTK is fetched by CMake and pinned to release 1.4.5.
+No external `openssl` or `mkcert` executable is used.
 
-## Clean build
-
-In PowerShell:
+## Build and test
 
 ```powershell
-$env:VCPKG_ROOT = 'C:\Users\burak\vcpkg' # set once if it is not already defined
+$env:VCPKG_ROOT = 'C:\Users\you\vcpkg'
 cmake --preset windows-release
 cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
-The preset is preferred because it does not depend on shell-specific variable syntax. This also works in PowerShell because `CMakeLists.txt` discovers `VCPKG_ROOT` automatically:
+The optional trust-store integration test must run from an elevated terminal:
 
 ```powershell
-cmake -S . -B build -DVCPKG_TARGET_TRIPLET=x64-windows-static
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+$env:APPYTIZER_RUN_ELEVATED_TLS_TESTS = '1'
+.\build\Release\appytizer_tests.exe '[.elevated]'
 ```
 
-Do not pass `$env:VCPKG_ROOT/...` literally from Git Bash or cmd: that syntax is PowerShell-only. Use the preset above, or set `VCPKG_ROOT` in the shell first.
+It provisions two same-subject test CAs and verifies that removing one exact
+recorded certificate does not remove the other.
 
 ## Run locally
 
-The Engine must run elevated in development because Windows requires elevation to update the managed `hosts` entries. Open PowerShell in the repository and run:
+Provision the Appytizer CA once through UAC, then start the Engine elevated and
+the UI normally:
 
 ```powershell
+Start-Process .\build\Release\AppytizerEngine.exe -ArgumentList '--provision-tls' -Verb RunAs -Wait
 Start-Process .\build\Release\AppytizerEngine.exe -ArgumentList '--run-console' -Verb RunAs
 Start-Process .\build\Release\Appytizer.exe -ArgumentList '--show'
 ```
 
-Accept the UAC prompt for the Engine. The UI must not be elevated.
+In Settings, choose the projects root. Each direct child name must be one DNS
+label: 1–63 ASCII letters, digits, or hyphens, with no leading or trailing
+hyphen. Names that differ only by case collide. Invalid folders remain visible
+in Sites with an actionable reason, but receive no hosts entry, certificate, or
+nginx server block.
 
-In **Settings**, choose the projects root, for example `C:\appitizer`, then click **Save and apply**. Put each site in a direct child directory:
+Example layout:
 
 ```text
-C:\appitizer\hello\index.html
-C:\appitizer\testy\index.html
+C:\appytizer\hello\index.html
+C:\appytizer\php\index.php
 ```
 
-Appytizer watches the configured projects root while the Engine is running. Adding, removing, or renaming a direct project folder automatically updates SQLite, managed hosts entries, nginx virtual-host files, and the visible Sites list; Appytizer-managed nginx is refreshed when it is already running. **Rescan folders** remains available as an explicit recovery action. On Engine startup, the first detected PHP and nginx versions are started automatically; the Dashboard or Services page can still restart them manually.
+Checks:
 
 ```powershell
-curl.exe --noproxy '*' http://hello.test/
-curl.exe --noproxy '*' http://testy.test/
+curl.exe --noproxy '*' https://hello.test/
+curl.exe --noproxy '*' https://php.test/
+curl.exe --noproxy '*' -I http://hello.test/
 ```
 
-If nginx was already started outside Appytizer, it may already own port 80 and serve its stock welcome page. Stop that existing nginx master before starting nginx from Appytizer; only one nginx listener can own port 80.
+The HTTP check should return `308` with a corresponding `https://hello.test/`
+location. Edge and Chrome trust the certificates through the Windows machine
+trust store. The Settings Repair button reruns provisioning through UAC and
+refreshes certificates and nginx configuration.
 
-## Diagnostics
+If another nginx instance already owns port 80 or 443, stop it before starting
+Appytizer-managed nginx.
+
+## TLS and service commands
+
+These commands are idempotent and require elevation:
 
 ```powershell
-# Browser-style resolution uses the managed hosts entry.
+AppytizerEngine.exe --provision-tls
+AppytizerEngine.exe --remove-tls
+AppytizerEngine.exe --install-service
+AppytizerEngine.exe --uninstall-service
+```
+
+`--provision-tls` preserves an existing valid Appytizer CA and site
+certificates. `--remove-tls` uses recorded SHA-1 and SHA-256 fingerprints to
+remove only the exact Appytizer trust entry, then deletes Appytizer-owned keys.
+The uninstaller stops the service before TLS cleanup and service removal.
+
+## Generated state and diagnostics
+
+- CA, ownership metadata, and leaf certificates:
+  `%ProgramData%\Appytizer\certificates`
+- Engine-owned config, database, logs, and active/staged nginx trees:
+  the Engine account's `%LOCALAPPDATA%\Appytizer`
+- Hostname resolution: tagged entries in the Windows `hosts` file; TLS
+  provisioning does not replace hostname resolution
+
+```powershell
 ping hello.test
-
-# Query Appytizer's loopback DNS responder directly.
 Resolve-DnsName hello.test -Type A -Server 127.0.0.1 -DnsOnly
-
-# Check the active listener on port 80.
-Get-NetTCPConnection -LocalPort 80 -State Listen
+Get-NetTCPConnection -LocalPort 80,443 -State Listen
 ```
 
-Appytizer-generated nginx files live under `%LOCALAPPDATA%\Appytizer\nginx`. Engine logs are under `%LOCALAPPDATA%\Appytizer\logs`.
+Before activation, the Engine generates a complete staging tree and runs
+`nginx -t`. A certificate or nginx validation failure leaves the last active
+tree untouched. Unknown HTTP hosts return `404`; unknown TLS hosts reject the
+handshake.

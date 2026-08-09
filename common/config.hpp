@@ -8,7 +8,7 @@ namespace appytizer {
 /// Persisted application settings shared by engine and UI.
 struct AppConfig {
   std::filesystem::path root_folder;
-  std::string extension{".test"};
+  bool https_enabled{true};
   bool run_minimized{};
   bool autostart{};
   std::map<std::string, std::string> active_versions;

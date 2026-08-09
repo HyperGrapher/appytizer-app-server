@@ -9,6 +9,7 @@
 #include <deque>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
 namespace appytizer {
 struct PipeServer::Subscriber {
@@ -60,13 +61,17 @@ void PipeServer::broadcast(std::string_view event) {
 }
 void PipeServer::run() {
   PSECURITY_DESCRIPTOR descriptor{};
-  ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)", SDDL_REVISION_1, &descriptor, nullptr);
+  ConvertStringSecurityDescriptorToSecurityDescriptorW(
+      L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)(A;;GRGW;;;WD)(A;;GRGW;;;RC)(A;;GRGW;;;AC)S:(ML;;NW;;;LW)",
+      SDDL_REVISION_1, &descriptor, nullptr);
   SECURITY_ATTRIBUTES security{sizeof(security), descriptor, FALSE};
   while (running_) {
     HANDLE pipe = CreateNamedPipeW(pipe_name_.c_str(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
         PIPE_UNLIMITED_INSTANCES, 65536, 65536, 1000, descriptor ? &security : nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
       if (!running_) break;
+      spdlog::error("CreateNamedPipeW failed for the Appytizer IPC endpoint (error {}).", GetLastError());
+      Sleep(10);
       continue;
     }
     if (!(ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED)) { CloseHandle(pipe); continue; }

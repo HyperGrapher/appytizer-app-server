@@ -17,6 +17,7 @@ SolidCompression=yes
 [Files]
 Source: "..\build-check\Release\Appytizer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build-check\Release\AppytizerEngine.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build-check\Release\AppytizerEngine.exe"; DestName: "AppytizerTlsProvisioner.exe"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\Appytizer"; Filename: "{app}\Appytizer.exe"
@@ -34,5 +35,10 @@ var ResultCode: Integer;
 begin
   { Safe when the service does not exist; prevents a locked engine on upgrade. }
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop AppytizerEngine', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := '';
+  ExtractTemporaryFile('AppytizerTlsProvisioner.exe');
+  if not Exec(ExpandConstant('{tmp}\AppytizerTlsProvisioner.exe'), '--provision-tls', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    Result := 'Appytizer could not provision its trusted local HTTPS certificate authority. Setup was stopped without replacing the existing installation.'
+  else
+    Result := '';
 end;
