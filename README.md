@@ -41,6 +41,48 @@ $env:APPYTIZER_RUN_ELEVATED_TLS_TESTS = '1'
 It provisions two same-subject test CAs and verifies that removing one exact
 recorded certificate does not remove the other.
 
+## Build the installer
+
+The Inno Setup definition is `installer\installer.iss`. It packages the current
+Release UI and Engine from `build\Release`, plus the staged nginx and PHP
+runtimes from `installer\Output`.
+
+Install Inno Setup 6, then compile from the repository root. A per-user Inno
+Setup installation can be invoked with this path; change it if Inno is
+installed elsewhere:
+
+```powershell
+$innoCompiler = 'C:\Users\burak\AppData\Local\Programs\Inno Setup 6\ISCC.exe'
+if (-not (Test-Path -LiteralPath $innoCompiler)) {
+  throw "Inno Setup compiler not found: $innoCompiler"
+}
+
+cmake --build build --config Release
+& $innoCompiler '.\installer\installer.iss'
+```
+
+The resulting installer is written to:
+
+```text
+installer\Output\AppytizerSetup.exe
+```
+
+The same build can be run interactively by opening `installer\installer.iss`
+in Inno Setup Compiler and choosing **Build > Compile**.
+
+Before upgrading an installed copy, exit the Appytizer tray UI. Run the setup
+with administrator privileges:
+
+```powershell
+Start-Process '.\installer\Output\AppytizerSetup.exe' -Verb RunAs
+```
+
+Setup provisions the trusted local CA, installs the Engine service, and can
+launch the UI after installation. Reinstalling preserves Engine state, valid
+TLS material, and the shared PHP configuration at
+`%ProgramData%\Appytizer\php\php.ini`; it is therefore an installed-binary
+test, not a full data reset.
+
 ## Run locally
 
 Provision the Appytizer CA once through UAC, then start the Engine elevated and

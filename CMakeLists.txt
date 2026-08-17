@@ -60,7 +60,7 @@ target_link_libraries(AppytizerEngine PRIVATE appytizer_common unofficial::sqlit
 
 add_executable(Appytizer WIN32 appytizer-ui/main.cpp appytizer-ui/ipc/pipe_client.cpp src/app.rc)
 target_link_libraries(Appytizer PRIVATE appytizer_common fltk::fltk spdlog::spdlog
-  comctl32 shell32 user32 gdi32 ole32 advapi32)
+  comctl32 dwmapi shell32 user32 gdi32 ole32 advapi32)
 
 foreach(target appytizer_common AppytizerEngine Appytizer)
   if(MSVC)
