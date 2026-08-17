@@ -1,0 +1,114 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+env:
+  NGINX_VERSION: "1.31.3"
+  PHP_VERSION: "8.5.9"
+
+jobs:
+  verify-tag:
+    name: Verify tag is on master
+    runs-on: windows-latest
+    outputs:
+      on_master: ${{ steps.check.outputs.on_master }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit ancestry
+        id: check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandErrorActionPreference = "Continue"
+          git fetch origin master --no-tags
+          git merge-base --is-ancestor "$env:GITHUB_SHA" "origin/master"
+          $onMaster = $LASTEXITCODE -eq 0
+          "on_master=$($onMaster.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $onMaster) {
+            Write-Host "::notice::Tag $env:GITHUB_REF_NAME does not point to a commit reachable from master; release build skipped."
+          }
+
+  build-and-release:
+    name: Build and publish Windows installer
+    needs: verify-tag
+    if: needs.verify-tag.outputs.on_master == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure and build Release
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: |
+          cmake --preset windows-release
+          cmake --build --preset windows-release -- /m
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --preset windows-release --output-on-failure
+
+      - name: Stage bundled nginx and PHP runtimes
+        shell: pwsh
+        run: |
+          $outputRoot = Join-Path $env:GITHUB_WORKSPACE "installer\Output"
+          New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+
+          $nginxArchive = Join-Path $env:RUNNER_TEMP "nginx-$env:NGINX_VERSION.zip"
+          Invoke-WebRequest -Uri "https://nginx.org/download/nginx-$env:NGINX_VERSION.zip" -OutFile $nginxArchive
+          Expand-Archive -Path $nginxArchive -DestinationPath $outputRoot -Force
+          if (-not (Test-Path (Join-Path $outputRoot "nginx-$env:NGINX_VERSION\nginx.exe"))) {
+            throw "The nginx archive did not contain the expected nginx.exe."
+          }
+
+          $phpArchive = Join-Path $env:RUNNER_TEMP "php-$env:PHP_VERSION-nts-Win32-vs17-x64.zip"
+          Invoke-WebRequest -Uri "https://windows.php.net/downloads/releases/php-$env:PHP_VERSION-nts-Win32-vs17-x64.zip" -OutFile $phpArchive
+          $phpRoot = Join-Path $outputRoot "php85"
+          New-Item -ItemType Directory -Force -Path $phpRoot | Out-Null
+          Expand-Archive -Path $phpArchive -DestinationPath $phpRoot -Force
+          if (-not (Test-Path (Join-Path $phpRoot "php-cgi.exe"))) {
+            throw "The PHP archive did not contain the expected php-cgi.exe."
+          }
+
+          $productionIni = Join-Path $phpRoot "php.ini-production"
+          $runtimeIni = Join-Path $phpRoot "php.ini"
+          Copy-Item -LiteralPath $productionIni -Destination $runtimeIni -Force
+          $ini = Get-Content -LiteralPath $runtimeIni -Raw
+          $ini = $ini.Replace(';extension_dir = "ext"', 'extension_dir = "ext"')
+          Set-Content -LiteralPath $runtimeIni -Value $ini -Encoding utf8NoBOM
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $compiler = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $compiler)) {
+            throw "Inno Setup compiler not found at $compiler"
+          }
+          & $compiler "$env:GITHUB_WORKSPACE\installer\installer.iss"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            "$env:GITHUB_WORKSPACE\installer\Output\AppytizerSetup.exe" `
+            --title "Appytizer $env:GITHUB_REF_NAME" `
+            --generate-notes

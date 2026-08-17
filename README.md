@@ -70,6 +70,21 @@ installer\Output\AppytizerSetup.exe
 The same build can be run interactively by opening `installer\installer.iss`
 in Inno Setup Compiler and choosing **Build > Compile**.
 
+## GitHub Releases
+
+The repository publishes a Windows installer when a version tag points to a
+commit on `master`. Push a tag such as `v1.0.1` after committing the release:
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The Windows workflow builds and tests the Release configuration, downloads the
+pinned nginx and PHP runtimes, compiles the Inno Setup installer, and attaches
+`AppytizerSetup.exe` to the generated GitHub Release. Tags that do not point to
+the `master` history are skipped.
+
 Before upgrading an installed copy, exit the Appytizer tray UI. Run the setup
 with administrator privileges:
 
