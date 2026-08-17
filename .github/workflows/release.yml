@@ -15,7 +15,7 @@ env:
 jobs:
   verify-tag:
     name: Verify tag is on master
-    runs-on: windows-latest
+    runs-on: windows-2022
     outputs:
       on_master: ${{ steps.check.outputs.on_master }}
     steps:
@@ -42,17 +42,30 @@ jobs:
     name: Build and publish Windows installer
     needs: verify-tag
     if: needs.verify-tag.outputs.on_master == 'true'
-    runs-on: windows-latest
+    runs-on: windows-2022
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_BUILD_TYPE: release
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-binary-cache
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'CMakeLists.txt', 'CMakePresets.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Configure and build Release
         shell: pwsh
-        env:
-          VCPKG_ROOT: C:\vcpkg
         run: |
           cmake --preset windows-release
           cmake --build --preset windows-release -- /m
