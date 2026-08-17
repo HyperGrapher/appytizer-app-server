@@ -212,24 +212,20 @@ private:
 void register_builtin_providers(ServiceRegistry& registry, const AppConfig& config) {
   const auto program_files = environment_path(L"ProgramFiles");
   const auto local = environment_path(L"LOCALAPPDATA");
-  const auto chocolatey = environment_path(L"ChocolateyInstall");
   const auto bundled_runtime = bundled_runtime_directory();
   const auto bundled_nginx_root = bundled_runtime;
   const auto bundled_php_root = bundled_runtime / L"php";
   const auto php_ini = ConfigStore::default_path().parent_path() / L"php" / L"php.ini";
   const auto user_winget_roots = profile_roots(L"AppData\\Local\\Microsoft\\WinGet\\Packages");
   const auto user_program_roots = profile_roots(L"AppData\\Local\\Programs");
-  auto nginx_roots = roots({configured_root(config, "nginx"), bundled_nginx_root, L"C:\\nginx", L"C:\\tools\\nginx",
-                            program_files / L"nginx", chocolatey / L"bin"});
-  nginx_roots.insert(nginx_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
-  nginx_roots.insert(nginx_roots.end(), user_program_roots.begin(), user_program_roots.end());
+  auto nginx_roots = roots({bundled_nginx_root});
   auto php_roots = roots({configured_root(config, "php"), bundled_php_root, L"C:\\php", L"C:\\tools\\php",
                           program_files / L"PHP", local / L"Programs\\PHP", local / L"scoop\\apps\\php"});
   php_roots.insert(php_roots.end(), user_winget_roots.begin(), user_winget_roots.end());
   php_roots.insert(php_roots.end(), user_program_roots.begin(), user_program_roots.end());
   registry.add(std::make_unique<Provider>("nginx", "nginx",
       std::move(nginx_roots),
-      std::vector<std::wstring>{L"nginx.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{L"nginx"},
+      std::vector<std::wstring>{L"nginx.exe"}, std::vector<std::wstring>{}, std::vector<std::wstring>{},
       L"", bundled_nginx_root));
   registry.add(std::make_unique<Provider>("php", "PHP",
       std::move(php_roots),
@@ -242,8 +238,5 @@ void register_builtin_providers(ServiceRegistry& registry, const AppConfig& conf
   registry.add(std::make_unique<Provider>("postgres", "PostgreSQL",
       roots({configured_root(config, "postgres"), program_files / L"PostgreSQL"}),
       std::vector<std::wstring>{L"postgres.exe"}, std::vector<std::wstring>{L"postgresql"}, std::vector<std::wstring>{L"PostgreSQL"}));
-  registry.add(std::make_unique<Provider>("mongodb", "MongoDB",
-      roots({configured_root(config, "mongodb"), program_files / L"MongoDB"}),
-      std::vector<std::wstring>{L"mongod.exe"}, std::vector<std::wstring>{L"mongodb"}, std::vector<std::wstring>{L"MongoDB"}));
 }
 } // namespace appytizer

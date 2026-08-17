@@ -18,6 +18,7 @@ struct ScannedSite {
   std::string hostname;
   std::string path;
   std::string type;
+  bool has_index{};
   std::string error;
 };
 
@@ -54,6 +55,7 @@ SiteRegistry::SiteRegistry() {
           "hostname TEXT NOT NULL,"
           "path TEXT NOT NULL,"
           "detected_type TEXT NOT NULL,"
+          "has_index INTEGER NOT NULL,"
           "validation_error TEXT NOT NULL DEFAULT '');");
 }
 
@@ -127,14 +129,20 @@ bool SiteRegistry::rescan(const std::filesystem::path& root) {
       }
       const auto name = entry.path().filename().string();
       const auto normalized = lowercase_ascii(name);
-      scanned.push_back({name,
-                         normalized + std::string(kSiteSuffix),
-                         entry.path().string(),
-                         std::filesystem::exists(entry.path() / "index.php", error) ? "PHP" : "Static",
-                         validate_dns_label(name)});
+      const bool has_php_index = std::filesystem::exists(entry.path() / "index.php", error);
       if (error) {
         return false;
       }
+      const bool has_html_index = std::filesystem::exists(entry.path() / "index.html", error);
+      if (error) {
+        return false;
+      }
+      scanned.push_back({name,
+                         normalized + std::string(kSiteSuffix),
+                         entry.path().string(),
+                         has_php_index ? "php" : has_html_index ? "html" : "",
+                         has_php_index || has_html_index,
+                         validate_dns_label(name)});
     }
   } else if (error) {
     return false;
@@ -157,8 +165,8 @@ bool SiteRegistry::rescan(const std::filesystem::path& root) {
   }
   sqlite3_stmt* statement{};
   if (sqlite3_prepare_v2(db_,
-                         "INSERT INTO sites(folder_name,hostname,path,detected_type,validation_error) "
-                         "VALUES(?,?,?,?,?);",
+                         "INSERT INTO sites(folder_name,hostname,path,detected_type,has_index,validation_error) "
+                         "VALUES(?,?,?,?,?,?);",
                          -1, &statement, nullptr) != SQLITE_OK) {
     execute(db_, "ROLLBACK;");
     return false;
@@ -171,7 +179,8 @@ bool SiteRegistry::rescan(const std::filesystem::path& root) {
     sqlite3_bind_text(statement, 2, site.hostname.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(statement, 3, site.path.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(statement, 4, site.type.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(statement, 5, site.error.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(statement, 5, site.has_index ? 1 : 0);
+    sqlite3_bind_text(statement, 6, site.error.c_str(), -1, SQLITE_TRANSIENT);
     if (sqlite3_step(statement) != SQLITE_DONE) {
       inserted = false;
       break;
@@ -192,17 +201,18 @@ nlohmann::json SiteRegistry::list() const {
   }
   sqlite3_stmt* statement{};
   if (sqlite3_prepare_v2(db_,
-                         "SELECT folder_name,hostname,path,detected_type,validation_error "
+                         "SELECT folder_name,hostname,path,detected_type,has_index,validation_error "
                          "FROM sites ORDER BY folder_name COLLATE NOCASE, folder_name;",
                          -1, &statement, nullptr) != SQLITE_OK) {
     return result;
   }
   while (sqlite3_step(statement) == SQLITE_ROW) {
-    const auto error = std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 4)));
+    const auto error = std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 5)));
     result.push_back({{"name", reinterpret_cast<const char*>(sqlite3_column_text(statement, 0))},
                       {"hostname", reinterpret_cast<const char*>(sqlite3_column_text(statement, 1))},
                       {"path", reinterpret_cast<const char*>(sqlite3_column_text(statement, 2))},
                       {"type", reinterpret_cast<const char*>(sqlite3_column_text(statement, 3))},
+                      {"has_index", sqlite3_column_int(statement, 4) != 0},
                       {"valid", error.empty()},
                       {"error", error}});
   }

@@ -11,14 +11,18 @@
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Group.H>
+#include <FL/Fl_Image.H>
 #include <FL/Fl_Input.H>
+#include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Scroll.H>
 #include <FL/fl_draw.H>
 #include <FL/platform.H>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <initializer_list>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -43,6 +47,88 @@ const Fl_Color kFault = fl_rgb_color(0xFF, 0x71, 0x65);
 class App;
 App* g_app{};
 
+std::filesystem::path executable_directory() {
+  std::array<wchar_t, 32768> executable{};
+  const DWORD length =
+      GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
+  if (length == 0 || length == executable.size()) {
+    return {};
+  }
+  return std::filesystem::path(executable.data()).parent_path();
+}
+
+class AssetCatalog final {
+public:
+  AssetCatalog() {
+    const auto directory = executable_directory() / L"assets";
+    window_icon_ = load_png(directory / L"app_icon.png");
+    if (window_icon_ != nullptr) {
+      brand_icon_.reset(window_icon_->copy(36, 36));
+      app_icon_.reset(window_icon_->copy(24, 24));
+    }
+    html_icon_ = load_scaled(directory / L"html.png", 24);
+    nginx_icon_ = load_scaled(directory / L"nginx.png", 24);
+    php_icon_ = load_scaled(directory / L"php.png", 24);
+    mysql_icon_ = load_scaled(directory / L"mysql.png", 24);
+    postgres_icon_ = load_scaled(directory / L"postgres.png", 24);
+  }
+
+  [[nodiscard]] const Fl_RGB_Image* windowIcon() const { return window_icon_.get(); }
+  [[nodiscard]] Fl_Image* brandIcon() const { return brand_icon_.get(); }
+
+  [[nodiscard]] Fl_Image* serviceIcon(std::string_view id) const {
+    if (id == "dns") {
+      return app_icon_.get();
+    }
+    if (id == "nginx") {
+      return nginx_icon_.get();
+    }
+    if (id == "php") {
+      return php_icon_.get();
+    }
+    if (id == "mysql") {
+      return mysql_icon_.get();
+    }
+    if (id == "postgres") {
+      return postgres_icon_.get();
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] Fl_Image* siteIcon(std::string_view type) const {
+    if (type == "php") {
+      return php_icon_.get();
+    }
+    if (type == "html") {
+      return html_icon_.get();
+    }
+    return nullptr;
+  }
+
+private:
+  static std::unique_ptr<Fl_PNG_Image> load_png(const std::filesystem::path& path) {
+    auto image = std::make_unique<Fl_PNG_Image>(path.string().c_str());
+    if (image->fail() != 0) {
+      return nullptr;
+    }
+    return image;
+  }
+
+  static std::unique_ptr<Fl_Image> load_scaled(const std::filesystem::path& path, int size) {
+    const auto source = load_png(path);
+    return source != nullptr ? std::unique_ptr<Fl_Image>(source->copy(size, size)) : nullptr;
+  }
+
+  std::unique_ptr<Fl_PNG_Image> window_icon_;
+  std::unique_ptr<Fl_Image> brand_icon_;
+  std::unique_ptr<Fl_Image> app_icon_;
+  std::unique_ptr<Fl_Image> html_icon_;
+  std::unique_ptr<Fl_Image> nginx_icon_;
+  std::unique_ptr<Fl_Image> php_icon_;
+  std::unique_ptr<Fl_Image> mysql_icon_;
+  std::unique_ptr<Fl_Image> postgres_icon_;
+};
+
 Fl_Box* make_label(int x, int y, int w, int h, std::string_view value,
                    Fl_Color color = kText, int size = 13, Fl_Font font = FL_HELVETICA) {
   auto* label = new Fl_Box(x, y, w, h);
@@ -50,6 +136,68 @@ Fl_Box* make_label(int x, int y, int w, int h, std::string_view value,
   label->box(FL_NO_BOX); label->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
   label->labelcolor(color); label->labelsize(size); label->labelfont(font); return label;
 }
+
+Fl_Box* make_image(int x, int y, int w, int h, Fl_Image* image, std::string_view tooltip = {}) {
+  auto* box = new Fl_Box(x, y, w, h);
+  box->box(FL_NO_BOX);
+  box->image(image);
+  box->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+  if (!tooltip.empty()) {
+    box->copy_tooltip(std::string(tooltip).c_str());
+  }
+  return box;
+}
+
+class LinkLabel final : public Fl_Box {
+public:
+  LinkLabel(int x, int y, int w, int h, std::string url)
+      : Fl_Box(x, y, w, h), url_(std::move(url)) {
+    copy_label(url_.c_str());
+    box(FL_NO_BOX);
+    align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
+    labelcolor(kLink);
+    labelfont(FL_COURIER);
+    labelsize(12);
+    copy_tooltip(url_.c_str());
+  }
+
+  int handle(int event) override {
+    if (event == FL_ENTER) {
+      is_hovered_ = true;
+      window()->cursor(FL_CURSOR_HAND);
+      redraw();
+      return 1;
+    }
+    if (event == FL_LEAVE) {
+      is_hovered_ = false;
+      window()->cursor(FL_CURSOR_DEFAULT);
+      redraw();
+      return 1;
+    }
+    if (event == FL_RELEASE && Fl::event_inside(this)) {
+      ShellExecuteA(nullptr, "open", url_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+      return 1;
+    }
+    return Fl_Box::handle(event);
+  }
+
+  void draw() override {
+    Fl_Box::draw();
+    if (!is_hovered_) {
+      return;
+    }
+    fl_font(labelfont(), labelsize());
+    const int underline_width =
+        std::min(w(), static_cast<int>(fl_width(label())));
+    const int baseline = y() + ((h() - labelsize()) / 2) + labelsize();
+    fl_color(labelcolor());
+    fl_line(x(), baseline + 1, x() + underline_width, baseline + 1);
+  }
+
+private:
+  std::string url_;
+  bool is_hovered_{};
+};
 
 class SeparatorBox final : public Fl_Box {
 public:
@@ -114,9 +262,6 @@ public:
     fl_color(selected_ ? kText : kMuted);
     fl_font(selected_ ? FL_BOLD : FL_HELVETICA, 13);
     fl_draw(label(), x(), y(), w(), h(), FL_ALIGN_CENTER | FL_ALIGN_CLIP);
-    if (Fl::focus() == this) {
-      draw_focus();
-    }
   }
 
 private:
@@ -125,7 +270,8 @@ private:
 
 class ServiceRow final : public Fl_Group {
 public:
-  ServiceRow(int x, int y, int w, const nlohmann::json& service, App* app);
+  ServiceRow(int x, int y, int w, const nlohmann::json& service, App* app,
+             Fl_Image* icon);
   void update(const nlohmann::json& service);
   void set_disconnected();
   [[nodiscard]] const std::string& id() const { return id_; }
@@ -139,12 +285,16 @@ private:
   Fl_Choice* versions_{};
   Fl_Box* version_label_{};
   Fl_Box* status_{};
+  Fl_Box* installation_{};
   Button* action_{};
+  void update_installation(const nlohmann::json& installations,
+                           std::string_view active_version);
 };
 
 class SiteRow final : public Fl_Group {
 public:
-  SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled);
+  SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled,
+          Fl_Image* type_icon);
 private:
   static void copy_callback(Fl_Widget*, void* data);
   static void open_callback(Fl_Widget*, void* data);
@@ -222,7 +372,10 @@ public:
 
 private:
   struct UiConfig { std::filesystem::path root_folder; bool https_enabled{true}; bool run_minimized{}; bool autostart{}; };
-  UiConfig config_; appytizer::PipeClient client_; TrayIcon tray_;
+  UiConfig config_;
+  AssetCatalog assets_;
+  appytizer::PipeClient client_;
+  TrayIcon tray_;
   Fl_Double_Window* window_{};
   std::array<Fl_Group*, 3> views_{};
   std::array<TabButton*, 3> nav_{};
@@ -231,7 +384,7 @@ private:
   Fl_Box *engine_status_{}, *dns_status_{}, *nginx_status_{}, *tls_summary_{};
   Fl_Box *root_summary_{}, *sites_empty_{};
   Fl_Scroll *services_scroll_{}, *sites_scroll_{};
-  Button *services_rescan_{}, *sites_rescan_{};
+  Button* services_rescan_{};
   Fl_Input* root_input_{};
   Fl_Check_Button *https_{}, *minimized_{}, *autostart_{};
   Fl_Box *tls_status_{}, *settings_result_{};
@@ -250,18 +403,6 @@ private:
       app->refresh_services(true);
     });
   }
-  static void sites_rescan_callback(Fl_Widget*, void* data) {
-    auto* app = static_cast<App*>(data);
-    app->sites_rescan_->copy_label("Rescanning…");
-    app->sites_rescan_->deactivate();
-    app->sites_rescan_->redraw();
-    app->client_.request("sites.rescan", "{}", [app](std::string) {
-      app->sites_rescan_->copy_label("Rescan folders");
-      app->sites_rescan_->activate();
-      app->sites_rescan_->redraw();
-      app->refresh_sites();
-    });
-  }
   static void save_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->save_settings(); }
   static void browse_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->browse(); }
   static void repair_tls_callback(Fl_Widget*, void* data) { static_cast<App*>(data)->repair_tls(); }
@@ -275,16 +416,19 @@ private:
     Fl::set_font(FL_COURIER, "Consolas");
     window_ = new Fl_Double_Window(1000, 640, "Appytizer");
     window_->color(kBackground);
+    if (assets_.windowIcon() != nullptr) {
+      window_->icon(assets_.windowIcon());
+    }
     window_->size_range(1000, 640, 1000, 640);
     window_->callback([](Fl_Widget* widget, void*) { widget->hide(); });
     window_->begin();
 
     auto* header = new SeparatorBox(0, 0, 1000, 58);
     header->color(kBackground);
-    make_label(20, 12, 112, 34, "Appytizer", kText, 17, FL_BOLD);
+    make_image(20, 11, 36, 36, assets_.brandIcon(), "Appytizer");
     constexpr std::array<const char*, 3> names{"Sites", "Services", "Settings"};
     constexpr std::array<int, 3> widths{88, 104, 100};
-    int tab_x = 148;
+    int tab_x = 76;
     for (int i = 0; i < 3; ++i) {
       nav_[i] = new TabButton(tab_x, 0, widths[i], 58, names[i]);
       nav_[i]->selected(i == 0);
@@ -306,7 +450,7 @@ private:
     status_separator->box(FL_FLAT_BOX);
     status_separator->color(kBorder);
     engine_status_ = make_label(20, 609, 210, 30, "● Connecting to Engine", kMuted, 11);
-    dns_status_ = make_label(238, 609, 160, 30, "○ DNS unavailable", kMuted, 11);
+    dns_status_ = make_label(238, 609, 160, 30, "○ Routing unavailable", kMuted, 11);
     nginx_status_ = make_label(406, 609, 180, 30, "○ nginx unavailable", kMuted, 11);
     tls_summary_ = make_label(594, 609, 386, 30, "○ Checking HTTPS trust", kMuted, 11);
     window_->end();
@@ -320,10 +464,8 @@ private:
   void build_sites() {
     begin_view(0);
     make_label(20, 72, 90, 30, "Sites", kText, 18, FL_BOLD);
-    root_summary_ = make_label(112, 74, 670, 28, "No projects folder configured", kMuted, 12,
+    root_summary_ = make_label(112, 74, 868, 28, "No projects folder configured", kMuted, 12,
                                FL_COURIER);
-    sites_rescan_ = make_button(820, 72, 160, 32, "Rescan folders");
-    sites_rescan_->callback(sites_rescan_callback, this);
 
     auto* table_header = new SeparatorBox(20, 116, 960, 30);
     table_header->color(kControl);
@@ -336,7 +478,7 @@ private:
     sites_scroll_->box(FL_NO_BOX);
     sites_scroll_->begin();
     sites_empty_ = make_label(36, 166, 900, 44,
-                              "No sites found. Choose a projects folder in Settings, then rescan.",
+                              "No sites found. Choose a projects folder in Settings.",
                               kMuted, 13);
     sites_scroll_->end();
     views_[0]->end();
@@ -352,9 +494,9 @@ private:
     auto* table_header = new SeparatorBox(20, 116, 960, 30);
     table_header->color(kControl);
     make_label(32, 116, 100, 29, "STATE", kMuted, 11, FL_BOLD);
-    make_label(142, 116, 132, 29, "SERVICE", kMuted, 11, FL_BOLD);
-    make_label(284, 116, 112, 29, "VERSION", kMuted, 11, FL_BOLD);
-    make_label(408, 116, 390, 29, "DETECTED INSTALLATION", kMuted, 11, FL_BOLD);
+    make_label(174, 116, 150, 29, "SERVICE", kMuted, 11, FL_BOLD);
+    make_label(334, 116, 112, 29, "VERSION", kMuted, 11, FL_BOLD);
+    make_label(454, 116, 370, 29, "DETECTED INSTALLATION", kMuted, 11, FL_BOLD);
     make_label(846, 116, 100, 29, "ACTION", kMuted, 11, FL_BOLD);
 
     services_scroll_ = new Fl_Scroll(20, 146, 960, 450);
@@ -387,7 +529,7 @@ private:
     make_label(20, 244, 220, 24, "HTTPS AND TRUST", kMuted, 11, FL_BOLD);
     auto* https_separator = new SeparatorBox(20, 270, 960, 1);
     https_separator->color(kBorder);
-    https_ = new Fl_Check_Button(20, 284, 480, 28, "Use trusted HTTPS for local sites");
+    https_ = new Fl_Check_Button(20, 284, 480, 28, "  Use trusted HTTPS for local sites");
     https_->color(kBackground);
     https_->selection_color(kLink);
     https_->labelcolor(kText);
@@ -400,12 +542,13 @@ private:
     make_label(20, 374, 220, 24, "STARTUP", kMuted, 11, FL_BOLD);
     auto* startup_separator = new SeparatorBox(20, 400, 960, 1);
     startup_separator->color(kBorder);
-    autostart_ = new Fl_Check_Button(20, 414, 420, 28, "Run Appytizer UI when I sign in");
+    autostart_ = new Fl_Check_Button(20, 414, 420, 28, "  Run Appytizer UI when I sign in");
     autostart_->color(kBackground);
     autostart_->selection_color(kLink);
     autostart_->labelcolor(kText);
     autostart_->labelsize(13);
-    minimized_ = new Fl_Check_Button(20, 450, 420, 28, "Start minimized to the notification area");
+    minimized_ = new Fl_Check_Button(20, 450, 420, 28,
+                                     "  Start minimized to the notification area");
     minimized_->color(kBackground);
     minimized_->selection_color(kLink);
     minimized_->labelcolor(kText);
@@ -447,12 +590,12 @@ private:
       const std::string id = service.value("id", "");
       const bool running = service.value("running", false);
       if (id == "dns") {
-        dns_status_->copy_label(running ? "● DNS running" : "○ DNS stopped");
-        dns_status_->labelcolor(running ? kReady : kMuted);
+        dns_status_->copy_label(running ? "● Routing running" : "● Routing stopped");
+        dns_status_->labelcolor(running ? kReady : kFault);
         dns_status_->redraw();
       } else if (id == "nginx") {
-        nginx_status_->copy_label(running ? "● nginx running" : "○ nginx stopped");
-        nginx_status_->labelcolor(running ? kReady : kMuted);
+        nginx_status_->copy_label(running ? "● nginx running" : "● nginx stopped");
+        nginx_status_->labelcolor(running ? kReady : kFault);
         nginx_status_->redraw();
       }
       for (auto* row : service_rows_) {
@@ -479,10 +622,10 @@ private:
       else if (type == "engine.disconnected") {
         engine_status_->copy_label("● Engine disconnected");
         engine_status_->labelcolor(kFault);
-        dns_status_->copy_label("○ DNS unavailable");
-        dns_status_->labelcolor(kMuted);
-        nginx_status_->copy_label("○ nginx unavailable");
-        nginx_status_->labelcolor(kMuted);
+        dns_status_->copy_label("● Routing unavailable");
+        dns_status_->labelcolor(kFault);
+        nginx_status_->copy_label("● nginx unavailable");
+        nginx_status_->labelcolor(kFault);
         tls_summary_->copy_label("○ HTTPS status unavailable");
         tls_summary_->labelcolor(kMuted);
         engine_status_->redraw();
@@ -535,7 +678,8 @@ private:
       y += 26;
       for (const auto id : ids) {
         if (const auto* service = find_service(id)) {
-          service_rows_.push_back(new ServiceRow(20, y, 942, *service, this));
+          service_rows_.push_back(
+              new ServiceRow(20, y, 942, *service, this, assets_.serviceIcon(id)));
           y += 46;
         }
       }
@@ -544,7 +688,7 @@ private:
 
     add_group("CORE ROUTING", {"dns", "nginx"});
     add_group("RUNTIME", {"php"});
-    add_group("DATABASES", {"mysql", "postgres", "mongodb"});
+    add_group("DATABASES", {"mysql", "postgres"});
     services_scroll_->end();
     services_scroll_->redraw();
   }
@@ -641,14 +785,15 @@ private:
     if (sites.empty()) {
       sites_empty_ = make_label(
           36, 166, 900, 44,
-          "No sites found. Choose a projects folder in Settings, then rescan.", kMuted, 13);
+          "No sites found. Choose a projects folder in Settings.", kMuted, 13);
     } else {
       const auto add_rows = [this, &sites, &y](bool valid) {
         for (const auto& site : sites) {
           if (site.value("valid", false) != valid) {
             continue;
           }
-          new SiteRow(20, y, 942, site, config_.https_enabled);
+          new SiteRow(20, y, 942, site, config_.https_enabled,
+                      assets_.siteIcon(site.value("type", "")));
           y += valid ? 44 : 56;
         }
       };
@@ -720,27 +865,31 @@ private:
   }
 };
 
-ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* app)
+ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* app,
+                       Fl_Image* icon)
     : Fl_Group(x, y, w, 46),
       id_(service.value("id", "")),
       app_(app),
       running_(service.value("running", false)) {
   const auto installations = service.value("installations", nlohmann::json::array());
   is_available_ = id_ == "dns" || !installations.empty();
+  const std::string active_version = service.value("version", "");
 
   begin();
   auto* background = new SeparatorBox(x, y, w, 46);
   background->color(kSurface);
-  const std::string initial_status = running_ ? "● Running" : is_available_ ? "○ Stopped" : "○ Not detected";
+  const std::string initial_status =
+      running_ ? "● Running" : is_available_ ? "● Stopped" : "● Not detected";
   status_ = make_label(x + 12, y, 100, 45, initial_status,
-                       running_ ? kReady : kMuted, 11);
-  make_label(x + 122, y, 132, 45, service.value("name", id_), kText, 13, FL_BOLD);
+                       running_ ? kReady : kFault, 11);
+  make_image(x + 122, y + 11, 24, 24, icon, service.value("name", id_));
+  make_label(x + 154, y, 150, 45, service.value("name", id_), kText, 13, FL_BOLD);
 
-  if (id_ == "dns") {
-    version_label_ = make_label(x + 264, y, 112, 45, service.value("version", ".test"),
-                                kMuted, 12, FL_COURIER);
+  if (id_ == "dns" || id_ == "nginx") {
+    version_label_ = make_label(x + 314, y, 108, 45, active_version,
+                                 kMuted, 12, FL_COURIER);
   } else {
-    versions_ = new Fl_Choice(x + 264, y + 8, 110, 30);
+    versions_ = new Fl_Choice(x + 314, y + 8, 108, 30);
     versions_->box(FL_BORDER_BOX);
     versions_->color(kControl);
     versions_->textcolor(kText);
@@ -749,7 +898,6 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
     for (const auto& version : service.value("available_versions", nlohmann::json::array())) {
       versions_->add(version.get<std::string>().c_str());
     }
-    const std::string active_version = service.value("version", "");
     int selected_version = 0;
     for (int index = 0; index < versions_->size(); ++index) {
       const char* candidate = versions_->text(index);
@@ -764,17 +912,8 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
     versions_->callback(version_callback, this);
   }
 
-  std::string location = id_ == "dns" ? "Built in · loopback port 53" : "No installation detected";
-  if (!installations.empty()) {
-    const auto& first = installations.front();
-    location = first.value("windows_service", false)
-                   ? "Windows service: " + first.value("service_name", "")
-                   : first.value("path", "");
-    if (installations.size() > 1) {
-      location += "  +" + std::to_string(installations.size() - 1) + " more";
-    }
-  }
-  make_label(x + 388, y, 416, 45, location, kMuted, 11, FL_COURIER);
+  installation_ = make_label(x + 434, y, 370, 45, "", kMuted, 11, FL_COURIER);
+  update_installation(installations, active_version);
   action_ = make_button(x + 826, y + 8, 88, 30, running_ ? "Stop" : "Start");
   action_->callback(action_callback, this);
   if (!is_available_) {
@@ -785,12 +924,44 @@ ServiceRow::ServiceRow(int x, int y, int w, const nlohmann::json& service, App* 
   }
   end();
 }
+
+void ServiceRow::update_installation(const nlohmann::json& installations,
+                                     std::string_view active_version) {
+  if (id_ == "dns") {
+    installation_->copy_label("Built in · loopback port 53");
+    installation_->redraw();
+    return;
+  }
+
+  const nlohmann::json* selected{};
+  for (const auto& installation : installations) {
+    if (installation.value("version", "") == active_version) {
+      selected = &installation;
+      break;
+    }
+  }
+  if (selected == nullptr && !installations.empty()) {
+    selected = &installations.front();
+  }
+
+  std::string location = "No installation detected";
+  if (selected != nullptr) {
+    location = selected->value("windows_service", false)
+                   ? "Windows service: " + selected->value("service_name", "")
+                   : selected->value("path", "");
+  }
+  installation_->copy_label(location.c_str());
+  installation_->copy_tooltip(location.c_str());
+  installation_->redraw();
+}
+
 void ServiceRow::update(const nlohmann::json& service) {
   running_ = service.value("running", false);
   const auto installations = service.value("installations", nlohmann::json::array());
   is_available_ = id_ == "dns" || !installations.empty();
-  status_->copy_label(running_ ? "● Running" : is_available_ ? "○ Stopped" : "○ Not detected");
-  status_->labelcolor(running_ ? kReady : kMuted);
+  status_->copy_label(
+      running_ ? "● Running" : is_available_ ? "● Stopped" : "● Not detected");
+  status_->labelcolor(running_ ? kReady : kFault);
   action_->copy_label(running_ ? "Stop" : "Start");
   if (is_available_) {
     action_->activate();
@@ -816,6 +987,7 @@ void ServiceRow::update(const nlohmann::json& service) {
     version_label_->copy_label(active_version.c_str());
     version_label_->redraw();
   }
+  update_installation(installations, active_version);
   status_->redraw();
   action_->redraw();
 }
@@ -845,29 +1017,45 @@ void ServiceRow::version_callback(Fl_Widget*, void* data) {
   }
 }
 
-SiteRow::SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled)
+SiteRow::SiteRow(int x, int y, int w, const nlohmann::json& site, bool https_enabled,
+                 Fl_Image* type_icon)
     : Fl_Group(x, y, w, site.value("valid", false) ? 44 : 56),
       url_((https_enabled ? "https://" : "http://") + site.value("hostname", "")) {
   const bool valid = site.value("valid", false);
+  const bool has_index = site.value("has_index", false);
   const int row_height = valid ? 44 : 56;
   begin();
   auto* background = new SeparatorBox(x, y, w, row_height);
   background->color(kSurface);
-  make_label(x + 12, y, 94, row_height, valid ? "● Valid name" : "! Invalid",
-             valid ? kReady : kAttention, 11);
+  auto* state_icon = make_label(x + 12, y, 94, row_height,
+                                !valid ? "✕" : has_index ? "✓" : "⚠",
+                                !valid ? kFault : has_index ? kReady : kAttention, 18,
+                                FL_BOLD);
+  state_icon->align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+  if (!valid) {
+    state_icon->copy_tooltip(site.value("error", "Invalid site name").c_str());
+  } else if (!has_index) {
+    state_icon->copy_tooltip(
+        "No index: this folder does not contain index.php or index.html.");
+  } else {
+    state_icon->copy_tooltip("Site is ready.");
+  }
   make_label(x + 112, y, 160, row_height, site.value("name", ""), kText, 13, FL_BOLD);
   make_label(x + 276, y, 26, row_height, valid ? "→" : "↛",
-             valid ? kMuted : kAttention, 13);
+              valid ? kMuted : kFault, 13);
   if (valid) {
-    make_label(x + 310, y, 360, row_height, url_, kLink, 12, FL_COURIER);
-    make_label(x + 682, y, 92, row_height, site.value("type", ""), kMuted, 12);
+    new LinkLabel(x + 310, y, 360, row_height, url_);
+    if (type_icon != nullptr) {
+      make_image(x + 710, y + 10, 24, 24, type_icon,
+                 site.value("type", "") == "php" ? "PHP site" : "HTML site");
+    }
     auto* copy = make_button(x + 786, y + 7, 70, 30, "Copy");
     copy->callback(copy_callback, this);
     auto* open = make_button(x + 864, y + 7, 70, 30, "Open");
     open->callback(open_callback, this);
   } else {
     auto* error = make_label(x + 310, y + 4, 462, row_height - 8,
-                             site.value("error", "Invalid DNS label"), kAttention, 11);
+                             site.value("error", "Invalid DNS label"), kFault, 11);
     error->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
     make_label(x + 786, y, 148, row_height, "Rename the folder", kMuted, 11);
   }

@@ -384,15 +384,35 @@ TEST_CASE("nginx configuration covers HTTPS, HTTP, PHP, and default-host rejecti
   std::error_code error;
   std::filesystem::create_directories(directory.path() / "projects" / "hello", error);
   std::filesystem::create_directories(directory.path() / "projects" / "php", error);
+  std::filesystem::create_directories(directory.path() / "projects" / "empty", error);
   std::filesystem::create_directories(directory.path() / "projects" / "bad_name", error);
+  std::ofstream(directory.path() / "projects" / "hello" / "index.html") << "<!doctype html>";
   std::ofstream(directory.path() / "projects" / "php" / "index.php") << "<?php";
   REQUIRE_FALSE(error);
 
   appytizer::SiteRegistry registry;
   REQUIRE(registry.rescan(directory.path() / "projects"));
   const auto sites = registry.list();
-  REQUIRE(sites.size() == 3);
-  REQUIRE(std::ranges::count_if(sites, [](const auto& site) { return site.value("valid", false); }) == 2);
+  REQUIRE(sites.size() == 4);
+  REQUIRE(std::ranges::count_if(sites, [](const auto& site) { return site.value("valid", false); }) == 3);
+  const auto hello = std::ranges::find_if(sites, [](const auto& site) {
+    return site.value("name", "") == "hello";
+  });
+  const auto php = std::ranges::find_if(sites, [](const auto& site) {
+    return site.value("name", "") == "php";
+  });
+  const auto empty = std::ranges::find_if(sites, [](const auto& site) {
+    return site.value("name", "") == "empty";
+  });
+  REQUIRE(hello != sites.end());
+  REQUIRE(hello->value("type", "") == "html");
+  REQUIRE(hello->value("has_index", false));
+  REQUIRE(php != sites.end());
+  REQUIRE(php->value("type", "") == "php");
+  REQUIRE(php->value("has_index", false));
+  REQUIRE(empty != sites.end());
+  REQUIRE(empty->value("type", "").empty());
+  REQUIRE_FALSE(empty->value("has_index", true));
 
   const auto certificates = directory.path() / "certificates";
   const auto https = directory.path() / "https";
@@ -443,6 +463,7 @@ TEST_CASE("installed nginx accepts the generated HTTPS configuration") {
   const auto projects = directory.path() / "projects";
   std::filesystem::create_directories(projects / "hello", error);
   std::filesystem::create_directories(projects / "php", error);
+  std::ofstream(projects / "hello" / "index.html") << "<!doctype html>";
   std::ofstream(projects / "php" / "index.php") << "<?php";
   REQUIRE_FALSE(error);
 

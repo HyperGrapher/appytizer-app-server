@@ -59,8 +59,13 @@ target_link_libraries(AppytizerEngine PRIVATE appytizer_common unofficial::sqlit
   OpenSSL::Crypto advapi32 crypt32 dnsapi iphlpapi psapi ws2_32 shell32 version)
 
 add_executable(Appytizer WIN32 appytizer-ui/main.cpp appytizer-ui/ipc/pipe_client.cpp src/app.rc)
-target_link_libraries(Appytizer PRIVATE appytizer_common fltk::fltk spdlog::spdlog
+target_link_libraries(Appytizer PRIVATE appytizer_common fltk::fltk fltk::images spdlog::spdlog
   comctl32 dwmapi shell32 user32 gdi32 ole32 advapi32)
+add_custom_command(TARGET Appytizer POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+          "$<TARGET_FILE_DIR:Appytizer>/assets"
+  COMMENT "Copying Appytizer UI assets")
 
 foreach(target appytizer_common AppytizerEngine Appytizer)
   if(MSVC)

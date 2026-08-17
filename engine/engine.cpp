@@ -278,7 +278,7 @@ void Engine::wait(HANDLE event) const {
 nlohmann::json Engine::service_list() const {
   nlohmann::json result = nlohmann::json::array();
   result.push_back({{"id", "dns"},
-                    {"name", "Local DNS"},
+                    {"name", "Appytizer Engine"},
                     {"running", dns_.running()},
                     {"version", kSiteSuffix},
                     {"ram_mb", 0},
