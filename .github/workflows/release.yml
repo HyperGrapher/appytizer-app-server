@@ -64,6 +64,10 @@ jobs:
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Prepare vcpkg binary cache directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path vcpkg-binary-cache | Out-Null
+
       - name: Configure and build Release
         shell: pwsh
         run: |
