@@ -45,6 +45,7 @@ target_link_libraries(appytizer_common PUBLIC nlohmann_json::nlohmann_json)
 target_compile_definitions(appytizer_common PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 
 add_executable(AppytizerEngine
+  src/app.rc
   engine/main.cpp
   engine/engine.cpp
   engine/dns/dns_server.cpp

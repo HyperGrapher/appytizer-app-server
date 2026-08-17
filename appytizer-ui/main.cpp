@@ -60,11 +60,12 @@ std::filesystem::path executable_directory() {
 class AssetCatalog final {
 public:
   AssetCatalog() {
+    Fl_Image::RGB_scaling(FL_RGB_SCALING_BILINEAR);
     const auto directory = executable_directory() / L"assets";
     window_icon_ = load_png(directory / L"app_icon.png");
     if (window_icon_ != nullptr) {
-      brand_icon_.reset(window_icon_->copy(36, 36));
-      app_icon_.reset(window_icon_->copy(24, 24));
+      brand_icon_ = copy_scaled(*window_icon_, 36);
+      app_icon_ = copy_scaled(*window_icon_, 24);
     }
     html_icon_ = load_scaled(directory / L"html.png", 24);
     nginx_icon_ = load_scaled(directory / L"nginx.png", 24);
@@ -116,7 +117,34 @@ private:
 
   static std::unique_ptr<Fl_Image> load_scaled(const std::filesystem::path& path, int size) {
     const auto source = load_png(path);
-    return source != nullptr ? std::unique_ptr<Fl_Image>(source->copy(size, size)) : nullptr;
+    return source != nullptr ? copy_scaled(*source, size) : nullptr;
+  }
+
+  static std::unique_ptr<Fl_Image> copy_scaled(const Fl_Image& source, int size) {
+    const int source_width = source.w();
+    const int source_height = source.h();
+    if (source_width <= 0 || source_height <= 0) {
+      return nullptr;
+    }
+
+    int target_width = size;
+    int target_height = size;
+    if (source_width > source_height) {
+      target_height = std::max(1, (source_height * size + source_width / 2) / source_width);
+    } else if (source_height > source_width) {
+      target_width = std::max(1, (source_width * size + source_height / 2) / source_height);
+    }
+
+    std::unique_ptr<Fl_Image> scaled(source.copy(source_width, source_height));
+    while (scaled->w() > target_width * 2 || scaled->h() > target_height * 2) {
+      const int next_width = std::max(target_width, scaled->w() / 2);
+      const int next_height = std::max(target_height, scaled->h() / 2);
+      scaled.reset(scaled->copy(next_width, next_height));
+    }
+    if (scaled->w() != target_width || scaled->h() != target_height) {
+      scaled.reset(scaled->copy(target_width, target_height));
+    }
+    return scaled;
   }
 
   std::unique_ptr<Fl_PNG_Image> window_icon_;

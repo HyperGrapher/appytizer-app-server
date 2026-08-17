@@ -11,6 +11,8 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=AppytizerSetup
+SetupIconFile=..\assets\app_icon.ico
+UninstallDisplayIcon={app}\Appytizer.exe
 Compression=lzma2
 SolidCompression=yes
 
