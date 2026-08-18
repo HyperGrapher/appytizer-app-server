@@ -57,9 +57,12 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
-          path: vcpkg-binary-cache
+          path: |
+            vcpkg-binary-cache
+            C:\vcpkg\downloads
           key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'CMakeLists.txt', 'CMakePresets.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ runner.arch }}-
@@ -71,12 +74,21 @@ jobs:
       - name: Configure and build Release
         shell: pwsh
         run: |
-          cmake --preset windows-release
+          cmake --preset windows-release -DVCPKG_BUILD_TYPE=release
           cmake --build --preset windows-release -- /m
+
+      - name: Save vcpkg cache after build
+        if: success() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            vcpkg-binary-cache
+            C:\vcpkg\downloads
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'CMakeLists.txt', 'CMakePresets.json') }}
 
       - name: Run tests
         shell: pwsh
-        run: ctest --preset windows-release --output-on-failure
+        run: ctest --preset windows-release --output-on-failure --timeout 60
 
       - name: Stage bundled nginx and PHP runtimes
         shell: pwsh
