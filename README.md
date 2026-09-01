@@ -21,6 +21,15 @@ local sites, HTTPS, and development services predictable.
 - Automatic nginx configuration and certificate updates when projects change
 - Activity and diagnostic information without requiring a browser dashboard
 
+## Low resource footprint
+
+Appytizer is intended to sit quietly in the tray rather than behave like a
+full development dashboard. The UI and Engine are native Windows processes,
+so they do not require an embedded browser or a JavaScript runtime. As a
+reference point, an idle local build measured about **34 MB** for the UI and
+**11 MB** for the Engine (roughly **45 MB combined working set**); actual usage
+varies with the number of sites, services, and Windows memory conditions.
+
 ## Requirements
 
 For users, Appytizer supports 64-bit Windows 10 and Windows 11.
