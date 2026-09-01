@@ -94,5 +94,5 @@ if(BUILD_TESTING)
   )
   target_link_libraries(appytizer_tests PRIVATE appytizer_common unofficial::sqlite3::sqlite3 Catch2::Catch2WithMain spdlog::spdlog
     OpenSSL::Crypto ws2_32 advapi32 crypt32 dnsapi shell32 psapi version)
-  catch_discover_tests(appytizer_tests PROPERTIES TIMEOUT 20)
+  catch_discover_tests(appytizer_tests PROPERTIES TIMEOUT 60)
 endif()

@@ -339,7 +339,8 @@ TEST_CASE("Service versions and executable detection are stable") {
   std::filesystem::create_directories(directory.path() / "nested", error);
   REQUIRE_FALSE(error);
   std::ofstream(directory.path() / "nested" / "php.exe") << "test";
-  const auto found = appytizer::find_installed_executables({L"php.exe"}, {directory.path()}, {});
+  const auto found = appytizer::find_installed_executables(
+      {L"php.exe"}, {directory.path()}, {L"__appytizer_test_registry_token__"});
   REQUIRE(std::ranges::any_of(found, [&](const auto& path) {
     return path.parent_path() == directory.path() / "nested";
   }));
