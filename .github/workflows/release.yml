@@ -112,12 +112,28 @@ jobs:
             throw "The PHP archive did not contain the expected php-cgi.exe."
           }
 
-          $productionIni = Join-Path $phpRoot "php.ini-production"
           $runtimeIni = Join-Path $phpRoot "php.ini"
-          Copy-Item -LiteralPath $productionIni -Destination $runtimeIni -Force
+          $bundledIni = Join-Path $env:GITHUB_WORKSPACE "installer\php.ini"
+          if (-not (Test-Path -LiteralPath $bundledIni)) {
+            throw "Bundled PHP configuration was not found at $bundledIni."
+          }
+          Copy-Item -LiteralPath $bundledIni -Destination $runtimeIni -Force
           $ini = Get-Content -LiteralPath $runtimeIni -Raw
-          $ini = $ini.Replace(';extension_dir = "ext"', 'extension_dir = "ext"')
-          Set-Content -LiteralPath $runtimeIni -Value $ini -Encoding utf8NoBOM
+
+          $normalizedIni = $ini -replace "`r", ""
+          $requiredDirectives = @(
+            'extension=curl', 'extension=fileinfo', 'extension=gd', 'extension=intl',
+            'extension=mbstring', 'extension=mysqli', 'extension=openssl',
+            'extension=pdo_mysql', 'extension=pdo_pgsql', 'extension=pdo_sqlite',
+            'extension=pgsql', 'extension=sockets', 'extension=sodium',
+            'extension=sqlite3', 'extension=zip', 'upload_max_filesize = 50M',
+            'post_max_size = 64M', 'memory_limit = 256M'
+          )
+          foreach ($directive in $requiredDirectives) {
+            if (-not [regex]::IsMatch($normalizedIni, '(?m)^' + [regex]::Escape($directive) + '$')) {
+              throw "Bundled PHP configuration is missing $directive."
+            }
+          }
 
       - name: Install Inno Setup
         shell: pwsh
