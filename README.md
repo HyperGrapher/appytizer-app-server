@@ -127,4 +127,4 @@ service/UI separation, and include tests for behavior changes.
 
 ## License
 
-See the repository license file for licensing terms.
+License terms have not yet been published.
