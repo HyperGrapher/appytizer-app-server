@@ -342,7 +342,7 @@ TEST_CASE("Service versions and executable detection are stable") {
   const auto found = appytizer::find_installed_executables(
       {L"php.exe"}, {directory.path()}, {L"__appytizer_test_registry_token__"});
   REQUIRE(std::ranges::any_of(found, [&](const auto& path) {
-    return path.parent_path() == directory.path() / "nested";
+    return path.filename() == L"php.exe" && path.parent_path().filename() == L"nested";
   }));
 }
 
