@@ -1,6 +1,7 @@
 #include "engine/engine.hpp"
 #include "common/constants.hpp"
 #include "common/win_handle.hpp"
+#include "common/windows_service.hpp"
 #include "engine/tls/certificate_manager.hpp"
 #include <windows.h>
 #include <winsvc.h>
@@ -63,18 +64,20 @@ bool install() {
       appytizer::kServiceDisplayName, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS,
       SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, path, nullptr, nullptr, nullptr, nullptr, nullptr));
   if (!service && GetLastError() == ERROR_SERVICE_EXISTS) {
-    service.reset(OpenServiceW(manager.get(), appytizer::kServiceName, SERVICE_START | SERVICE_QUERY_STATUS));
-    if (!service) return false;
-    SERVICE_STATUS_PROCESS status{}; DWORD bytes{};
-    if (QueryServiceStatusEx(service.get(), SC_STATUS_PROCESS_INFO, reinterpret_cast<BYTE*>(&status), sizeof(status), &bytes) &&
-        status.dwCurrentState == SERVICE_RUNNING) return true;
-    return StartServiceW(service.get(), 0, nullptr) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+    service.reset(OpenServiceW(manager.get(), appytizer::kServiceName,
+                               READ_CONTROL | WRITE_DAC | SERVICE_START |
+                                   SERVICE_QUERY_STATUS | SERVICE_CHANGE_CONFIG));
   }
-  if (!service) return false;
+  if (!service || !appytizer::grantServiceStartAccess(service.get())) return false;
   SC_ACTION actions[3] = {{SC_ACTION_RESTART, 5000}, {SC_ACTION_RESTART, 5000}, {SC_ACTION_RESTART, 5000}};
   SERVICE_FAILURE_ACTIONSW failure{60, nullptr, nullptr, 3, actions};
   ChangeServiceConfig2W(service.get(), SERVICE_CONFIG_FAILURE_ACTIONS, &failure);
   return StartServiceW(service.get(), 0, nullptr) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+}
+
+bool start_service() {
+  return appytizer::startWindowsService(appytizer::kServiceName) ==
+         appytizer::ServiceStartResult::running;
 }
 
 bool uninstall() {
@@ -124,6 +127,7 @@ int wmain(int argc, wchar_t** argv) {
   if (argc > 1) {
     const std::wstring_view arg = argv[1];
     if (arg == L"--install-service") return install() ? 0 : 1;
+    if (arg == L"--start-service") return start_service() ? 0 : 1;
     if (arg == L"--uninstall-service") return uninstall() ? 0 : 1;
     if (arg == L"--provision-tls") { appytizer::CertificateManager certificates; return certificates.provision() ? 0 : 1; }
     if (arg == L"--remove-tls") { appytizer::CertificateManager certificates; return certificates.remove() ? 0 : 1; }

@@ -1,5 +1,6 @@
 #include "appytizer-ui/ipc/pipe_client.hpp"
 #include "common/constants.hpp"
+#include "common/windows_service.hpp"
 #include <windows.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -358,6 +359,30 @@ bool set_ui_autostart(bool enabled) {
   } else result = RegDeleteValueW(key, appytizer::kApplicationId);
   RegCloseKey(key); return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
 }
+
+void ensure_engine_running() {
+  const auto result = appytizer::startWindowsService(appytizer::kServiceName);
+  if (result != appytizer::ServiceStartResult::accessDenied) {
+    return;
+  }
+
+  const auto engine = executable_directory() / L"AppytizerEngine.exe";
+  if (!std::filesystem::exists(engine)) {
+    return;
+  }
+  SHELLEXECUTEINFOW launch{sizeof(launch)};
+  launch.fMask = SEE_MASK_NOCLOSEPROCESS;
+  launch.lpVerb = L"runas";
+  launch.lpFile = engine.c_str();
+  launch.lpParameters = L"--start-service";
+  launch.nShow = SW_HIDE;
+  if (!ShellExecuteExW(&launch) || launch.hProcess == nullptr) {
+    return;
+  }
+  WaitForSingleObject(launch.hProcess, 15000);
+  CloseHandle(launch.hProcess);
+}
+
 class App {
 public:
   explicit App(bool force_show) : force_show_(force_show) { g_app = this; build_ui(); tray_.create(); client_.subscribe([this](std::string event) { handle_event(std::move(event)); }); refresh_all(); }
@@ -1111,6 +1136,7 @@ LRESULT CALLBACK tray_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
 
 int main(int argc, char** argv) {
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  ensure_engine_running();
   const bool force_show = argc > 1 && std::string_view(argv[1]) == "--show";
   App app(force_show);
   while (app.running()) { Fl::wait(0.25); }

@@ -39,6 +39,7 @@ find_package(OpenSSL REQUIRED)
 add_library(appytizer_common
   common/config.cpp
   common/ipc_protocol.cpp
+  common/windows_service.cpp
 )
 target_include_directories(appytizer_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(appytizer_common PUBLIC nlohmann_json::nlohmann_json)
