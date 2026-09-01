@@ -25,10 +25,11 @@ local sites, HTTPS, and development services predictable.
 
 Appytizer is intended to sit quietly in the tray rather than behave like a
 full development dashboard. The UI and Engine are native Windows processes,
-so they do not require an embedded browser or a JavaScript runtime. As a
-reference point, an idle local build measured about **34 MB** for the UI and
-**11 MB** for the Engine (roughly **45 MB combined working set**); actual usage
-varies with the number of sites, services, and Windows memory conditions.
+so they do not require an embedded browser or a JavaScript runtime. In normal
+idle use, it keeps a very small memory footprint while continuing to watch
+sites and manage the service in the background. Exact readings vary with the
+number of sites, enabled services, and Windows memory conditions, so users
+should treat Task Manager's current reading as the authoritative measurement.
 
 ## Requirements
 
