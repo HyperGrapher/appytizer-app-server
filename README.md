@@ -1,175 +1,130 @@
 # Appytizer App Server
 
-Appytizer maps each valid direct subfolder of a configured projects root to
-`https://<folder>.test`. It includes a non-elevated FLTK tray UI and a Windows
-Service Engine that owns configuration, hosts entries, certificates, nginx,
-PHP, and detected database services.
+Appytizer is a Windows-native local development environment for projects that
+need friendly local domains. Point it at a projects folder and each direct
+child becomes a site such as `https://my-project.test`.
 
-HTTPS is enabled by default. Appytizer creates its own machine-wide development
-CA and an exact certificate for each site, while valid HTTP requests redirect
-to HTTPS with status `308`. HTTPS can be disabled in Settings; Appytizer then
-serves sites over HTTP only and retains certificates for quick re-enablement.
-Appytizer never emits HSTS headers.
+It is conceptually similar to Laravel Valet and Laravel Herd, but is built for
+Windows with a native FLTK tray application, a background Windows service,
+nginx, and bundled PHP. It is designed to stay out of the way while keeping
+local sites, HTTPS, and development services predictable.
 
-## Prerequisites
+## Features
 
-- Windows 10 or 11, Visual Studio 2022 with Desktop C++ tools, and CMake 3.21+
-- vcpkg with `VCPKG_ROOT` set
-- nginx installed locally; Appytizer discovers common install paths, registry
-  entries, and `PATH`
+- Automatic local domains for project folders (`<folder>.test`)
+- HTTPS by default with an Appytizer-managed local certificate authority
+- HTTP-to-HTTPS redirects and optional HTTP-only mode
+- Bundled nginx and PHP runtime, with detection of other installed versions
+- PHP, MySQL, and PostgreSQL service status in the tray UI
+- Native Windows service for hosting and configuration
+- Site validation for DNS-safe folder names and required index files
+- Automatic nginx configuration and certificate updates when projects change
+- Activity and diagnostic information without requiring a browser dashboard
 
-The vcpkg manifest installs sqlite3, nlohmann-json, spdlog, Catch2, and OpenSSL
-for `x64-windows-static`. FLTK is fetched by CMake and pinned to release 1.4.5.
-No external `openssl` or `mkcert` executable is used.
+## Requirements
 
-## Build and test
+For users, Appytizer supports 64-bit Windows 10 and Windows 11.
 
-```powershell
-$env:VCPKG_ROOT = 'C:\Users\you\vcpkg'
-cmake --preset windows-release
-cmake --build --preset windows-release
-ctest --preset windows-release
-```
+For development, install:
 
-The optional trust-store integration test must run from an elevated terminal:
+- Visual Studio 2022 with the Desktop C++ workload
+- CMake 3.21 or newer
+- vcpkg with `VCPKG_ROOT` pointing to its checkout
+- Inno Setup 6 (only required for packaging an installer)
 
-```powershell
-$env:APPYTIZER_RUN_ELEVATED_TLS_TESTS = '1'
-.\build\Release\appytizer_tests.exe '[.elevated]'
-```
+Dependencies are declared in `vcpkg.json`. The CMake configuration uses the
+`x64-windows-static` triplet and fetches FLTK 1.4.5.
 
-It provisions two same-subject test CAs and verifies that removing one exact
-recorded certificate does not remove the other.
+## Build and package locally
 
-## Build the installer
-
-The Inno Setup definition is `installer\installer.iss`. It packages the current
-Release UI and Engine from `build\Release`, plus the staged nginx and PHP
-runtimes from `installer\Output`.
-
-Install Inno Setup 6, then compile from the repository root. A per-user Inno
-Setup installation can be invoked with this path; change it if Inno is
-installed elsewhere:
+From the repository root, run:
 
 ```powershell
-$innoCompiler = 'C:\Users\burak\AppData\Local\Programs\Inno Setup 6\ISCC.exe'
-if (-not (Test-Path -LiteralPath $innoCompiler)) {
-  throw "Inno Setup compiler not found: $innoCompiler"
-}
-
-cmake --build build --config Release
-& $innoCompiler '.\installer\installer.iss'
+$env:VCPKG_ROOT = 'D:\tools\vcpkg'
+.\scripts\build-installer.ps1
 ```
 
-The resulting installer is written to:
+The script configures and builds the Release targets, runs the test suite,
+downloads the pinned nginx and PHP runtimes when they are not already staged,
+copies the repository's `installer/php.ini` into the PHP runtime, checks for
+Inno Setup 6, and creates:
 
 ```text
 installer\Output\AppytizerSetup.exe
 ```
 
-The same build can be run interactively by opening `installer\installer.iss`
-in Inno Setup Compiler and choosing **Build > Compile**.
-
-## GitHub Releases
-
-The repository publishes a Windows installer when a version tag points to a
-commit on `master`. Push a tag such as `v1.0.1` after committing the release:
+To skip tests while iterating on packaging:
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+.\scripts\build-installer.ps1 -SkipTests
 ```
 
-The Windows workflow builds and tests the Release configuration, downloads the
-pinned nginx and PHP runtimes, compiles the Inno Setup installer, and attaches
-`AppytizerSetup.exe` to the generated GitHub Release. Tags that do not point to
-the `master` history are skipped.
+The script searches the normal per-user and system Inno Setup locations and
+does not contain machine-specific usernames or paths.
 
-Before upgrading an installed copy, exit the Appytizer tray UI. Run the setup
-with administrator privileges:
+## Run from a build
+
+Provision the local HTTPS certificate authority once from an elevated shell,
+then start the Engine elevated and the UI normally:
 
 ```powershell
-Start-Process '.\installer\Output\AppytizerSetup.exe' -Verb RunAs
+.\build\Release\AppytizerEngine.exe --provision-tls
+.\build\Release\AppytizerEngine.exe --run-console
+.\build\Release\Appytizer.exe --show
 ```
 
-Setup provisions the trusted local CA, installs the Engine service, and can
-launch the UI after installation. Reinstalling preserves Engine state, valid
-TLS material, and the shared PHP configuration at
-`%ProgramData%\Appytizer\php\php.ini`; it is therefore an installed-binary
-test, not a full data reset.
+Choose a projects root in Settings. Each direct child must be a single DNS
+label (letters, digits, and hyphens; no leading or trailing hyphen). A site
+serves `index.html` or `index.php` when present.
 
-## Run locally
-
-Provision the Appytizer CA once through UAC, then start the Engine elevated and
-the UI normally:
-
-```powershell
-Start-Process .\build\Release\AppytizerEngine.exe -ArgumentList '--provision-tls' -Verb RunAs -Wait
-Start-Process .\build\Release\AppytizerEngine.exe -ArgumentList '--run-console' -Verb RunAs
-Start-Process .\build\Release\Appytizer.exe -ArgumentList '--show'
-```
-
-In Settings, choose the projects root. Each direct child name must be one DNS
-label: 1–63 ASCII letters, digits, or hyphens, with no leading or trailing
-hyphen. Names that differ only by case collide. Invalid folders remain visible
-in Sites with an actionable reason, but receive no hosts entry, certificate, or
-nginx server block.
-
-Example layout:
+Example:
 
 ```text
-C:\appytizer\hello\index.html
-C:\appytizer\php\index.php
+C:\Projects\hello\index.html
+C:\Projects\catalog\index.php
 ```
 
-Checks:
-
-```powershell
-curl.exe --noproxy '*' https://hello.test/
-curl.exe --noproxy '*' https://php.test/
-curl.exe --noproxy '*' -I http://hello.test/
-```
-
-The HTTP check should return `308` with a corresponding `https://hello.test/`
-location. Edge and Chrome trust the certificates through the Windows machine
-trust store. The Settings Repair button reruns provisioning through UAC and
-refreshes certificates and nginx configuration.
-
-If another nginx instance already owns port 80 or 443, stop it before starting
+If another program is using ports 80 or 443, stop it before starting
 Appytizer-managed nginx.
 
-## TLS and service commands
+## Configuration and data
 
-These commands are idempotent and require elevation:
+Appytizer keeps runtime state outside the repository:
 
-```powershell
-AppytizerEngine.exe --provision-tls
-AppytizerEngine.exe --remove-tls
-AppytizerEngine.exe --install-service
-AppytizerEngine.exe --uninstall-service
-```
+- `%ProgramData%\Appytizer\certificates` — local CA and site certificates
+- `%ProgramData%\Appytizer\php\php.ini` — shared PHP configuration
+- `%LOCALAPPDATA%\Appytizer` — Engine configuration, logs, and nginx trees
 
-`--provision-tls` preserves an existing valid Appytizer CA and site
-certificates. `--remove-tls` uses recorded SHA-1 and SHA-256 fingerprints to
-remove only the exact Appytizer trust entry, then deletes Appytizer-owned keys.
-The uninstaller stops the service before TLS cleanup and service removal.
+The installer preserves an existing shared `php.ini` so upgrades do not erase
+user changes. New installations receive the tracked bundled configuration,
+which enables common PDO and web extensions and uses a 50 MB upload limit.
 
-## Generated state and diagnostics
+## GitHub releases
 
-- CA, ownership metadata, and leaf certificates:
-  `%ProgramData%\Appytizer\certificates`
-- Engine-owned config, database, logs, and active/staged nginx trees:
-  the Engine account's `%LOCALAPPDATA%\Appytizer`
-- Hostname resolution: tagged entries in the Windows `hosts` file; TLS
-  provisioning does not replace hostname resolution
+The Windows release workflow runs only for tags pushed to commits on
+`master`. It builds and tests the Release configuration, stages nginx and PHP,
+compiles the Inno Setup installer, and attaches it to a GitHub Release.
 
 ```powershell
-ping hello.test
-Resolve-DnsName hello.test -Type A -Server 127.0.0.1 -DnsOnly
-Get-NetTCPConnection -LocalPort 80,443 -State Listen
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Before activation, the Engine generates a complete staging tree and runs
-`nginx -t`. A certificate or nginx validation failure leaves the last active
-tree untouched. Unknown HTTP hosts return `404`; unknown TLS hosts reject the
-handshake.
+Tags that are not reachable from `master` are skipped.
+
+## Development notes
+
+The repository is split into the Engine (`engine/`), native UI
+(`appytizer-ui/`), shared code (`common/`), tests (`tests/`), and installer
+assets. Run the tests with:
+
+```powershell
+ctest --preset windows-release --output-on-failure --timeout 60
+```
+
+Contributions should keep platform-specific behavior isolated, preserve the
+service/UI separation, and include tests for behavior changes.
+
+## License
+
+See the repository license file for licensing terms.
