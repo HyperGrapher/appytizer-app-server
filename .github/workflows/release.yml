@@ -104,7 +104,7 @@ jobs:
           }
 
           $phpArchive = Join-Path $env:RUNNER_TEMP "php-$env:PHP_VERSION-nts-Win32-vs17-x64.zip"
-          Invoke-WebRequest -Uri "https://windows.php.net/downloads/releases/php-$env:PHP_VERSION-nts-Win32-vs17-x64.zip" -OutFile $phpArchive
+          Invoke-WebRequest -Uri "https://windows.php.net/downloads/releases/archives/php-$env:PHP_VERSION-nts-Win32-vs17-x64.zip" -OutFile $phpArchive
           $phpRoot = Join-Path $outputRoot "php85"
           New-Item -ItemType Directory -Force -Path $phpRoot | Out-Null
           Expand-Archive -Path $phpArchive -DestinationPath $phpRoot -Force
